@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>Vigil</title>
+  <link rel="stylesheet" href="vendor/uPlot.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- titlebar -->
+    <div class="titlebar">
+      <div class="brand"><span class="glyph"></span><span class="name">VIGIL</span></div>
+      <div class="title-pill" id="aggPill"><span class="led"></span><span class="txt">starting</span><span class="val" id="aggVal"></span></div>
+      <div class="spacer"></div>
+      <div class="winbtns">
+        <button class="winbtn" id="btnPin" title="Pin on top">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.8V4h6v6.8l2 3.2H7l2-3.2Z"/></svg>
+        </button>
+        <button class="winbtn" id="btnCompact" title="Compact overlay">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M4 8h16" opacity=".5"/></svg>
+        </button>
+        <button class="winbtn" id="btnMin" title="Minimize">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 12h12"/></svg>
+        </button>
+        <button class="winbtn danger" id="btnClose" title="Hide to tray">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- readiness hero -->
+    <div class="readiness" id="readiness">
+      <div class="verdict">
+        <span class="label">Readiness · <span id="rdTarget">—</span></span>
+        <span class="state" id="rdState">—</span>
+        <span class="sub" id="rdSub">waiting for first samples</span>
+      </div>
+      <div class="r-metrics">
+        <div class="r-metric" id="rmLoss"><span class="k">Packet loss</span><span class="v">—</span></div>
+        <div class="r-metric" id="rmJitter"><span class="k">Jitter</span><span class="v">—</span></div>
+        <div class="r-metric" id="rmClean"><span class="k">Worst spike</span><span class="v">—</span></div>
+      </div>
+    </div>
+
+    <!-- main grid -->
+    <div class="main">
+      <div class="targets">
+        <div class="col-head"><span class="eyebrow">Targets</span></div>
+        <div class="target-list" id="targetList"></div>
+        <button class="add-target" id="addTarget">+ Manage targets</button>
+      </div>
+
+      <div class="focus">
+        <div class="focus-card">
+          <div class="focus-bar">
+            <div class="focus-title"><span class="dot" id="focusDot"></span><span id="focusName">—</span><span class="host" id="focusHost"></span></div>
+            <div class="windows" id="windows"></div>
+          </div>
+          <div class="chart-wrap" id="chartWrap">
+            <div class="empty" id="chartEmpty">collecting data…</div>
+          </div>
+          <div class="stats-strip" id="statsStrip"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- footer -->
+    <div class="footer">
+      <div class="seg"><span class="eyebrow">Opacity</span><input class="opacity-slider" id="opacity" type="range" min="0.35" max="1" step="0.05" value="1" /></div>
+      <span class="tier-note" id="tierNote"></span>
+      <button class="winbtn gear" id="btnGear" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+      </button>
+    </div>
+
+    <!-- compact overlay -->
+    <div class="compact-view" id="compactView">
+      <div class="cv-top">
+        <span class="dot" id="cvDot"></span><span class="name" id="cvName">—</span>
+        <div class="btns">
+          <button class="winbtn" id="cvExpand" title="Expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+          </button>
+          <button class="winbtn danger" id="cvClose" title="Hide to tray">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="cv-mid">
+        <span class="cv-cur" id="cvCur">—</span>
+        <canvas class="cv-spark" id="cvSpark"></canvas>
+      </div>
+      <div class="cv-bot">
+        <span class="cv-state" id="cvState">—</span><span class="sep">·</span>
+        <span class="dim">loss</span> <span id="cvLoss">—</span><span class="sep">·</span>
+        <span class="dim">jit</span> <span id="cvJit">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings modal -->
+  <div class="modal-bg" id="modalBg">
+    <div class="modal">
+      <h2>Targets &amp; settings</h2>
+      <p class="hint">Each target is probed once per second. Use ICMP for raw reachability, or TCP against an open port (DNS:53, web:443, a game relay) when ICMP is filtered.</p>
+      <div class="tg-row head">
+        <span></span><span>Label</span><span>Host</span><span>Type</span><span>Port</span><span></span>
+      </div>
+      <div id="tgRows"></div>
+      <button class="btn ghost" id="tgAdd" style="margin-top:10px;">+ Add target</button>
+
+      <h3>Readiness</h3>
+      <div class="field">
+        <label for="lookback">Lookback window (minutes)</label>
+        <input type="number" id="lookback" min="1" max="60" step="1" />
+      </div>
+
+      <h3>System</h3>
+      <div class="field">
+        <label for="autostart">Launch at startup (opens to tray)</label>
+        <input type="checkbox" class="chk" id="autostart" />
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn ghost" id="tgCancel">Cancel</button>
+        <button class="btn primary" id="tgSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/uPlot.iife.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

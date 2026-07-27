@@ -1,0 +1,26 @@
+{
+  "name": "vigil",
+  "version": "1.0.0",
+  "description": "Live network latency and packet-loss monitor with an at-a-glance readiness verdict.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "uplot": "1.6.31"
+  },
+  "devDependencies": {
+    "electron": "^42.5.0"
+  },
+  "build": {
+    "appId": "com.vigil.monitor",
+    "productName": "Vigil",
+    "files": ["main.js", "preload.js", "src/**", "renderer/**", "node_modules/**"],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  }
+}
