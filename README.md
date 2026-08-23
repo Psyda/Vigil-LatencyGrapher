@@ -70,6 +70,25 @@ node tools/evidence-report.js --in vigil-data.json --out evidence.html
 
 Pointing it at `vigil-data.json` directly additionally renders fine last-hour and last-24-hour minute charts. Open the HTML in any browser and print to PDF for attaching to a ticket.
 
+## Finding where the jitter enters: the path locator
+
+Knowing that 8.8.8.8 is jittery tells you something is wrong; it does not tell you whether it is your wifi, your modem, your ISP, or the far end. `tools/path-jitter.js` is a standalone companion app for exactly that question. It traces the route to a target, then pings every responding hop continuously and in parallel — one persistent ping process per hop, the same probing model as the app — and compares loss and jitter per hop over a rolling window:
+
+```bash
+node tools/path-jitter.js                # trace + monitor 8.8.8.8
+node tools/path-jitter.js 1.1.1.1        # any other target
+node tools/path-jitter.js --window 10    # judge over the last 10 minutes
+node tools/path-jitter.js --plain        # line output instead of the live table
+```
+
+It shows a live MTR-style table — per-hop loss, latency, jitter, and a sparkline — and a verdict that names the segment where the trouble starts, e.g. "problem enters between hop 1 and hop 3". Press `q` to quit, `r` to re-trace immediately. The route is re-traced every 15 minutes by default (`--retrace N`, 0 to disable), and path changes are counted and logged, since a flapping route is itself a jitter suspect.
+
+One rule makes hop tables honest, and the verdict applies it for you: routers answer pings from their rate-limited control plane, so a noisy middle hop above a clean destination is cosmetic and gets labeled as ignorable. Only trouble that starts at some hop and persists through every later hop to the destination is treated as real. Hops that answer traceroute but ignore direct pings are kept for numbering but excluded from the analysis.
+
+Leave it running while you play — intermittent faults only localize while they are actually happening. Each run writes a JSONL log (`vigil-path-<target>-<stamp>.jsonl`, disable with `--no-log`) with one timestamped per-hop snapshot per minute plus every trace and path change, in UTC ISO timestamps like the other reports, ready to feed to an AI or attach to an ISP ticket alongside the evidence report.
+
+Like the app it needs no admin rights and no installs: it drives the system `ping`/`tracert` binaries, and where `traceroute` is missing (common on Linux) it discovers the path itself with TTL-limited pings. The same locale and macOS loss caveats from the notes below apply.
+
 ## Files
 
 ```

@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Electron builder output
+dist/
+build/
+out/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.blockmap
+
+# Vigil runtime data and config (app writes to userData, but ignore if copied in for tooling)
+vigil-data.json
+vigil-config.json
+*.vigil.json
+
+# Generated reports from tools/
+evidence.html
+report.json
+*.report.json
+reports/
+data/
+exports/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env and secrets
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
