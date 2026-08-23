@@ -4,6 +4,8 @@
 const WINDOW_LIST = [
   { key: '10m', label: '10m' },
   { key: '1h', label: '1h' },
+  { key: '2h', label: '2h' },
+  { key: '5h', label: '5h' },
   { key: '10h', label: '10h' },
   { key: '1d', label: '1d' },
   { key: '3d', label: '3d' },
@@ -25,12 +27,30 @@ function defaultTargets() {
   ];
 }
 
+// Readiness verdict thresholds. "Warn" boundaries rate Marginal, "bad"
+// boundaries rate Unstable. lossWarn defaults to 0 so a single lost probe in
+// the lookback window already drops the verdict to Marginal, and lossRunBad
+// consecutive lost probes (a real blackout, however brief) rate Unstable
+// outright regardless of the overall loss percentage.
+const DEFAULT_THRESHOLDS = {
+  lossWarn: 0,     // % packet loss above which the verdict is Marginal
+  lossBad: 2,      // % packet loss above which the verdict is Unstable
+  jitterWarn: 12,  // ms mean probe-to-probe delta
+  jitterBad: 30,
+  spikeWarn: 1,    // % of probes spiking well above the local norm
+  spikeBad: 5,
+  lossRunBad: 3,   // consecutive lost probes -> Unstable (0 disables)
+};
+
 const DEFAULT_SETTINGS = {
   readinessLookbackMin: 5,
+  probeIntervalSec: 1,
+  clipOutliers: false,
+  thresholds: { ...DEFAULT_THRESHOLDS },
   opacity: 1,
   alwaysOnTop: false,
 };
 
 const TARGET_PALETTE = ['#5ad1c8', '#7aa2f7', '#bb9af7', '#e0af68', '#9ece6a', '#f7768e', '#2ac3de', '#ff9e64'];
 
-module.exports = { WINDOW_LIST, defaultTargets, DEFAULT_SETTINGS, TARGET_PALETTE };
+module.exports = { WINDOW_LIST, defaultTargets, DEFAULT_SETTINGS, DEFAULT_THRESHOLDS, TARGET_PALETTE };

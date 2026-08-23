@@ -4,16 +4,18 @@
 //
 // Each target keeps three independent tiers, folded on ingest (not derived
 // from raw, because raw is evicted long before the coarse tiers are):
-//   raw   : one point per probe (~1s), kept ~1h   -> full-fidelity recent view
-//   min1  : 1-minute buckets,          kept ~7d   -> day / week views
-//   hour1 : 1-hour buckets,            kept ~3y   -> month / year / all views
+//   raw   : one point per probe, kept ~2h at 1s -> full-fidelity recent view
+//   min1  : 1-minute buckets,    kept ~7d       -> hours / day / week views
+//   hour1 : 1-hour buckets,      kept ~3y       -> month / year / all views
 //
 // A raw point is { t, v } where v is RTT in ms, or null for a lost probe.
 // A bucket is { t, min, max, sum, count, lost }:
 //   count = successful probes folded in, lost = failed probes,
 //   total = count + lost, avg = sum / count, loss% = lost / total * 100.
 
-const RAW_CAP = 3600;        // ~1 hour at 1Hz
+const { DEFAULT_THRESHOLDS } = require('./config.js');
+
+const RAW_CAP = 7200;        // ~2 hours at the default 1s probe interval
 const MIN1_CAP = 10080;      // 7 days of minutes
 const HOUR1_CAP = 26280;     // ~3 years of hours
 
@@ -24,6 +26,8 @@ const HOUR = 60 * MINUTE;
 const WINDOWS = {
   '10m': { ms: 10 * MINUTE, tier: 'raw' },
   '1h': { ms: HOUR, tier: 'raw' },
+  '2h': { ms: 2 * HOUR, tier: 'min1' },
+  '5h': { ms: 5 * HOUR, tier: 'min1' },
   '10h': { ms: 10 * HOUR, tier: 'min1' },
   '1d': { ms: 24 * HOUR, tier: 'min1' },
   '3d': { ms: 3 * 24 * HOUR, tier: 'min1' },
@@ -132,16 +136,39 @@ class Store {
   }
 
   // Recent-window readiness verdict, always from raw (inherently recent).
-  readiness(id, lookbackMs = 5 * MINUTE) {
+  // opts.thresholds overrides DEFAULT_THRESHOLDS; opts.intervalMs is the
+  // expected probe cadence, used to convert silent gaps into lost probes.
+  readiness(id, lookbackMs = 5 * MINUTE, opts = {}) {
+    const th = { ...DEFAULT_THRESHOLDS, ...(opts.thresholds || {}) };
+    const intervalMs = Math.max(200, opts.intervalMs || 1000);
     const tgt = this.targets.get(id);
     if (!tgt) return null;
-    const cutoff = Date.now() - lookbackMs;
+    const now = Date.now();
+    const cutoff = now - lookbackMs;
     const slice = tgt.raw.filter((s) => s.t >= cutoff);
     if (slice.length === 0) return { state: 'unknown', loss: 0, jitter: 0, spike: 0, samples: 0 };
     const ok = slice.filter((s) => s.v !== null).map((s) => s.v);
-    const total = slice.length;
-    const lost = total - ok.length;
+
+    // A silent probe gap is loss too: if the prober has produced nothing for
+    // several intervals (dead route with no timeout line, stalled process),
+    // count the probes that should have arrived by now as lost.
+    const silentMs = now - slice[slice.length - 1].t;
+    const missing = silentMs > Math.max(3000, intervalMs * 3) ? Math.floor(silentMs / intervalMs) : 0;
+
+    const total = slice.length + missing;
+    const lost = (slice.length - ok.length) + missing;
     const loss = (lost / total) * 100;
+
+    // longest consecutive run of lost probes; an ongoing silent gap extends
+    // the trailing run
+    let run = 0;
+    let lossRun = 0;
+    for (const s of slice) {
+      if (s.v === null) { run += 1; if (run > lossRun) lossRun = run; }
+      else run = 0;
+    }
+    if (run + missing > lossRun) lossRun = run + missing;
+
     const jitter = meanConsecutiveDelta(slice);
     const sorted = [...ok].sort((a, b) => a - b);
     const avg = ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : 0;
@@ -153,9 +180,10 @@ class Store {
     const spikes = ok.filter((v) => v > spikeThresh).length;
     const spikeRate = total ? (spikes / total) * 100 : 0;
     let state = 'good';
-    if (loss > 2 || jitter > 30 || spikeRate > 5) state = 'bad';
-    else if (loss > 0.5 || jitter > 12 || spikeRate > 1) state = 'warn';
-    return { state, loss, jitter, spike, spikeRate, worst, samples: total, avg };
+    if (loss > th.lossBad || jitter > th.jitterBad || spikeRate > th.spikeBad ||
+        (th.lossRunBad > 0 && lossRun >= th.lossRunBad)) state = 'bad';
+    else if (loss > th.lossWarn || jitter > th.jitterWarn || spikeRate > th.spikeWarn) state = 'warn';
+    return { state, loss, jitter, spike, spikeRate, worst, lossRun, samples: total, avg };
   }
 
   // --- persistence ---------------------------------------------------------

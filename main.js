@@ -6,7 +6,7 @@ const fs = require('fs');
 
 const { Store } = require('./src/store.js');
 const { ProbeEngine } = require('./src/probe.js');
-const { defaultTargets, DEFAULT_SETTINGS } = require('./src/config.js');
+const { defaultTargets, DEFAULT_SETTINGS, DEFAULT_THRESHOLDS } = require('./src/config.js');
 const { detectGateway } = require('./src/sysinfo.js');
 const autostart = require('./src/autostart.js');
 
@@ -33,6 +33,7 @@ function loadConfig() {
     const raw = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
     if (Array.isArray(raw.targets)) targets = raw.targets;
     if (raw.settings) settings = { ...DEFAULT_SETTINGS, ...raw.settings };
+    settings.thresholds = { ...DEFAULT_THRESHOLDS, ...(settings.thresholds || {}) };
   } catch (_) { /* first run */ }
 }
 
@@ -79,7 +80,7 @@ function aggregateState() {
   let best = null; // for tooltip we also surface a representative number
   for (const t of targets) {
     if (t.enabled === false || !t.host) continue;
-    const rd = store.readiness(t.id, settings.readinessLookbackMin * 60 * 1000);
+    const rd = store.readiness(t.id, settings.readinessLookbackMin * 60 * 1000, readinessOpts());
     if (!rd || rd.state === 'unknown') continue;
     if (worst === 'unknown' || rank[rd.state] > rank[worst]) worst = rd.state;
     if (!best || rd.loss < best.loss) best = { label: t.label, ...rd };
@@ -94,7 +95,7 @@ function updateTray() {
     tray.setImage(makeDot(DOT[worst] || DOT.unknown));
     lastTrayState = worst;
   }
-  const word = { good: 'clear', warn: 'unstable', bad: 'degraded', unknown: 'starting' }[worst];
+  const word = { good: 'clear', warn: 'marginal', bad: 'unstable', unknown: 'starting' }[worst];
   const detail = best ? ` · ${Math.round(best.avg)}ms · ${best.loss.toFixed(1)}% loss` : '';
   tray.setToolTip(`Vigil — ${word}${detail}`);
 }
@@ -191,8 +192,22 @@ function createWindow() {
 
 // --- probe wiring -----------------------------------------------------------
 
+function effectiveIntervalMs() {
+  const sec = Number(settings.probeIntervalSec) || 1;
+  return Math.round(Math.min(60, Math.max(0.5, sec)) * 1000);
+}
+
+// The probe cadence is a single global setting stamped onto every host here;
+// per-target intervalMs in the config file is legacy and ignored.
+function effectiveTargets() {
+  const intervalMs = effectiveIntervalMs();
+  return targets.filter((t) => t.enabled !== false && t.host).map((t) => ({ ...t, intervalMs }));
+}
+
+const readinessOpts = () => ({ intervalMs: effectiveIntervalMs(), thresholds: settings.thresholds });
+
 function applyTargets() {
-  engine.setTargets(targets.filter((t) => t.enabled !== false && t.host));
+  engine.setTargets(effectiveTargets());
 }
 
 engine.on('sample', (id, t, v) => {
@@ -205,7 +220,7 @@ function tick() {
   const ready = {};
   for (const t of targets) {
     if (t.enabled === false || !t.host) continue;
-    ready[t.id] = store.readiness(t.id, settings.readinessLookbackMin * 60 * 1000);
+    ready[t.id] = store.readiness(t.id, settings.readinessLookbackMin * 60 * 1000, readinessOpts());
   }
   win.webContents.send('tick', { live, ready, ts: Date.now() });
   updateTray();
@@ -216,25 +231,28 @@ function tick() {
 ipcMain.handle('config:get', () => ({ targets, settings, compact, autostart: autostart.getAutostart() }));
 
 // Order-independent signature of the probe-relevant fields, so a pure reorder
-// of the target list does not tear down and respawn every probe.
+// of the host list does not tear down and respawn every probe. Computed over
+// effectiveTargets() so a probe-interval change also triggers a respawn.
 function probeSig(list) {
   return list
-    .filter((t) => t.enabled !== false && t.host)
     .map((t) => `${t.id}|${t.type}|${t.host}|${t.port}|${t.intervalMs}|${t.timeoutMs}|${t.size}`)
     .sort()
     .join(';');
 }
 
 ipcMain.handle('config:set', (_e, payload) => {
-  const before = probeSig(targets);
+  const before = probeSig(effectiveTargets());
   if (payload && Array.isArray(payload.targets)) {
-    // drop store series for targets that no longer exist
+    // drop store series for hosts that no longer exist
     const keepIds = new Set(payload.targets.map((t) => t.id));
     for (const id of [...store.targets.keys()]) if (!keepIds.has(id)) store.removeTarget(id);
     targets = payload.targets;
   }
-  if (payload && payload.settings) settings = { ...settings, ...payload.settings };
-  if (probeSig(targets) !== before) applyTargets();
+  if (payload && payload.settings) {
+    settings = { ...settings, ...payload.settings };
+    settings.thresholds = { ...DEFAULT_THRESHOLDS, ...(settings.thresholds || {}) };
+  }
+  if (probeSig(effectiveTargets()) !== before) applyTargets();
   saveConfig();
   if (tray) tray.setContextMenu(buildTrayMenu());
   return { targets, settings };
@@ -242,7 +260,7 @@ ipcMain.handle('config:set', (_e, payload) => {
 
 ipcMain.handle('store:series', (_e, { id, win: w }) => store.querySeries(id, w));
 ipcMain.handle('store:stats', (_e, { id, win: w }) => store.queryStats(id, w));
-ipcMain.handle('store:readiness', (_e, { id, ms }) => store.readiness(id, ms));
+ipcMain.handle('store:readiness', (_e, { id, ms }) => store.readiness(id, ms, readinessOpts()));
 ipcMain.handle('store:live', () => store.live(120));
 ipcMain.handle('sys:gateway', () => detectGateway());
 

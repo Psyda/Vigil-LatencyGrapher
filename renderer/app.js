@@ -2,15 +2,20 @@
 
 const V = window.vigil;
 const WINDOWS = [
-  ['10m', '10m'], ['1h', '1h'], ['10h', '10h'], ['1d', '1d'],
+  ['10m', '10m'], ['1h', '1h'], ['2h', '2h'], ['5h', '5h'], ['10h', '10h'], ['1d', '1d'],
   ['3d', '3d'], ['7d', '7d'], ['30d', '30d'], ['1y', '1y'], ['all', 'All'],
 ];
+const TIME_ONLY_WINDOWS = ['10m', '1h', '2h', '5h'];
 const PALETTE = ['#5ad1c8', '#7aa2f7', '#bb9af7', '#e0af68', '#9ece6a', '#f7768e', '#2ac3de', '#ff9e64'];
-const TIER_LABEL = { raw: 'per-probe (~1s)', min1: '1-min buckets', hour1: '1-hour buckets' };
+const TIER_LABEL = { raw: 'per-probe', min1: '1-min buckets', hour1: '1-hour buckets' };
+const DEFAULT_THRESHOLDS = { lossWarn: 0, lossBad: 2, jitterWarn: 12, jitterBad: 30, spikeWarn: 1, spikeBad: 5, lossRunBad: 3 };
 
 const state = {
   targets: [],
-  settings: { readinessLookbackMin: 5, opacity: 1, alwaysOnTop: false },
+  settings: {
+    readinessLookbackMin: 5, probeIntervalSec: 1, clipOutliers: false,
+    thresholds: { ...DEFAULT_THRESHOLDS }, opacity: 1, alwaysOnTop: false,
+  },
   focusedId: null,
   win: '1h',
   pin: false,
@@ -47,7 +52,7 @@ function hexA(hex, a) {
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${a})`;
 }
-const STATE_WORD = { good: 'CLEAR TO QUEUE', warn: 'MARGINAL', bad: 'UNSTABLE', unknown: 'MEASURING' };
+const STATE_WORD = { good: 'CLEAR', warn: 'MARGINAL', bad: 'UNSTABLE', unknown: 'MEASURING' };
 
 // ---- sparkline ------------------------------------------------------------
 function drawSpark(canvas, values, hue) {
@@ -65,10 +70,17 @@ function drawSpark(canvas, values, hue) {
     return;
   }
   let lo = Math.min(...ok), hi = Math.max(...ok);
+  if (state.settings.clipOutliers && ok.length >= 10) {
+    // same idea as the main chart: scale to the 98th percentile so one spike
+    // doesn't flatten the trace; clipped values draw pinned to the top
+    const sorted = [...ok].sort((a, b) => a - b);
+    const cap = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))];
+    if (cap > lo) hi = Math.min(hi, cap);
+  }
   if (hi - lo < 4) { hi = lo + 4; }
   const pad = 3;
   const xstep = values.length > 1 ? w / (values.length - 1) : w;
-  const y = (v) => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+  const y = (v) => h - pad - ((Math.min(v, hi) - lo) / (hi - lo)) * (h - pad * 2);
   // loss ticks
   ctx.fillStyle = hexA('#f7768e', 0.5);
   values.forEach((v, i) => { if (v == null) { const x = i * xstep; ctx.fillRect(x - 0.5, 0, 1.4, h); } });
@@ -130,7 +142,7 @@ function tooltipPlugin() {
         const avg = u.data[3][idx], mn = u.data[2][idx], mx = u.data[1][idx];
         const loss = curLoss ? curLoss[idx] : 0;
         const d = new Date(t * 1000);
-        const time = state.win === '10m' || state.win === '1h'
+        const time = TIME_ONLY_WINDOWS.includes(state.win)
           ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         let html = `<div class="t-time">${time}</div>`;
@@ -154,16 +166,59 @@ function chartSize() {
   return { width: Math.max(120, wrap.clientWidth - 20), height: Math.max(80, wrap.clientHeight - 12) };
 }
 
+// While the user is drag-zoomed into a region, live refreshes must not reset
+// the scales back out (setData is called with resetScales=false). Double-
+// clicking the chart (uPlot's built-in) or the "zoomed" pill returns to live.
+let userZoom = false;
+function setZoomed(v) {
+  if (userZoom === v) return;
+  userZoom = v;
+  $('zoomHint').classList.toggle('show', v);
+}
+
+// Y range for the main chart. With "clip spikes" on, the top of the scale is
+// capped at the 99th percentile of the visible envelope so a single 900ms
+// outlier can't compress a real 150ms problem into the baseline. Outliers are
+// still in the data and draw clipped at the top edge.
+function chartYRange(u, dMin, dMax) {
+  if (dMin == null || dMax == null) return [0, 100];
+  let lo = dMin, hi = dMax;
+  if (state.settings.clipOutliers) {
+    const mx = u.data[1], av = u.data[3];
+    const vals = [];
+    for (let i = 0; i < mx.length; i++) {
+      const v = mx[i] != null ? mx[i] : av[i];
+      if (v != null) vals.push(v);
+    }
+    if (vals.length >= 20) {
+      vals.sort((a, b) => a - b);
+      const cap = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.99))];
+      if (cap > lo && cap < hi) hi = cap;
+    }
+  }
+  const span = Math.max(1, hi - lo);
+  return [Math.max(0, lo - span * 0.12 - 1), hi + span * 0.14 + 1];
+}
+
 function buildChart(hue) {
   if (chart) { chart.destroy(); chart = null; }
   chartHue = hue;
+  setZoomed(false);
   const { width, height } = chartSize();
   const axisStroke = '#45506280';
   const opts = {
     width, height,
     padding: [10, 8, 0, 0],
     cursor: { y: false, points: { size: 6, width: 2 }, focus: { prox: 24 } },
-    scales: { x: { time: true }, y: { auto: true, range: (u, min, max) => [Math.max(0, min - (max - min) * 0.12 - 1), max + (max - min) * 0.14 + 1] } },
+    scales: { x: { time: true }, y: { auto: true, range: chartYRange } },
+    hooks: {
+      setScale: [(u, key) => {
+        if (key !== 'x') return;
+        const xs = u.data[0];
+        if (!xs || xs.length < 2) { setZoomed(false); return; }
+        setZoomed(u.scales.x.min > xs[0] || u.scales.x.max < xs[xs.length - 1]);
+      }],
+    },
     series: [
       {},
       { label: 'max', stroke: 'transparent', points: { show: false } },
@@ -208,6 +263,7 @@ async function refreshFocus() {
     $('chartEmpty').style.display = 'grid';
     $('chartEmpty').textContent = 'collecting data…';
     curXs = null; curLoss = null;
+    setZoomed(false);
     if (chart) chart.setData([[], [], [], []]);
   } else {
     $('chartEmpty').style.display = 'none';
@@ -217,7 +273,12 @@ async function refreshFocus() {
       av[i] = pts[i].avg; mn[i] = pts[i].min; mx[i] = pts[i].max; ls[i] = pts[i].loss;
     }
     curXs = xs; curLoss = ls;
-    if (chart) chart.setData([xs, mx, mn, av]);
+    // keep the user's zoom: only reset scales when they are not zoomed in.
+    // setData(_, false) skips uPlot's commit, so repaint explicitly.
+    if (chart) {
+      chart.setData([xs, mx, mn, av], !userZoom);
+      if (userZoom) chart.redraw();
+    }
   }
   renderStats(st);
 }
@@ -349,6 +410,7 @@ function renderWindows() {
   $('windows').querySelectorAll('.win-tab').forEach((b) => b.addEventListener('click', () => {
     state.win = b.dataset.w;
     $('windows').querySelectorAll('.win-tab').forEach((x) => x.classList.toggle('active', x === b));
+    setZoomed(false);
     refreshFocus();
   }));
 }
@@ -392,7 +454,7 @@ function applyTick(data) {
   const worst = aggregate(ready);
   const pill = $('aggPill');
   pill.className = 'title-pill ' + (worst === 'unknown' ? '' : worst);
-  pill.querySelector('.txt').textContent = { good: 'clear', warn: 'unstable', bad: 'degraded', unknown: 'starting' }[worst];
+  pill.querySelector('.txt').textContent = { good: 'clear', warn: 'marginal', bad: 'unstable', unknown: 'starting' }[worst];
   const fr = ready[state.focusedId];
   $('aggVal').textContent = fr && fr.avg ? Math.round(fr.avg) + 'ms' : '';
 
@@ -425,7 +487,7 @@ function updateReadiness(ready) {
   box.className = 'readiness ' + rd.state;
   $('rdState').textContent = STATE_WORD[rd.state];
   const n = Object.keys(ready).length;
-  $('rdSub').innerHTML = `over the last <b>${state.settings.readinessLookbackMin} min</b> · ${n} active target${n === 1 ? '' : 's'}`;
+  $('rdSub').innerHTML = `over the last <b>${state.settings.readinessLookbackMin} min</b> · ${n} host${n === 1 ? '' : 's'} monitored`;
   const lossM = $('rmLoss'); lossM.querySelector('.v').innerHTML = `${fmtLoss(rd.loss)}`; lossM.classList.toggle('alert', rd.loss > 1);
   $('rmJitter').querySelector('.v').innerHTML = `${fmt(rd.jitter)}<small>ms</small>`;
   const worstM = $('rmClean');
@@ -464,7 +526,13 @@ function openSettings() {
   const rows = $('tgRows');
   rows.innerHTML = '';
   state.targets.forEach((t) => rows.appendChild(makeTgRow(t)));
+  $('probeInterval').value = state.settings.probeIntervalSec ?? 1;
   $('lookback').value = state.settings.readinessLookbackMin;
+  const th = { ...DEFAULT_THRESHOLDS, ...(state.settings.thresholds || {}) };
+  $('thLossWarn').value = th.lossWarn; $('thLossBad').value = th.lossBad;
+  $('thJitterWarn').value = th.jitterWarn; $('thJitterBad').value = th.jitterBad;
+  $('thSpikeWarn').value = th.spikeWarn; $('thSpikeBad').value = th.spikeBad;
+  $('thRunBad').value = th.lossRunBad;
   $('autostart').checked = state.autostart;
   $('modalBg').classList.add('open');
 }
@@ -487,6 +555,12 @@ function addTgRow() {
   const color = PALETTE[$('tgRows').children.length % PALETTE.length];
   $('tgRows').appendChild(makeTgRow({ id, label: '', host: '', type: 'icmp', port: 0, color, enabled: true }));
 }
+// clamped numeric field read
+function numField(id, def, lo, hi) {
+  const v = parseFloat($(id).value);
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def;
+}
+
 async function saveSettings() {
   const rows = [...$('tgRows').children];
   const existing = new Map(state.targets.map((t) => [t.id, t]));
@@ -494,7 +568,7 @@ async function saveSettings() {
   rows.forEach((row, i) => {
     const id = row.dataset.id;
     const prev = existing.get(id) || {};
-    const label = row.querySelector('.f-label').value.trim() || 'Target';
+    const label = row.querySelector('.f-label').value.trim() || 'Host';
     const host = row.querySelector('.f-host').value.trim();
     const type = row.querySelector('.f-type').value;
     const port = parseInt(row.querySelector('.f-port').value, 10) || (type === 'tcp' ? 443 : 0);
@@ -506,7 +580,17 @@ async function saveSettings() {
     });
   });
   state.targets = next;
+  state.settings.probeIntervalSec = numField('probeInterval', 1, 0.5, 60);
   state.settings.readinessLookbackMin = Math.min(60, Math.max(1, parseInt($('lookback').value, 10) || 5));
+  state.settings.thresholds = {
+    lossWarn: numField('thLossWarn', 0, 0, 100),
+    lossBad: numField('thLossBad', 2, 0, 100),
+    jitterWarn: numField('thJitterWarn', 12, 0, 10000),
+    jitterBad: numField('thJitterBad', 30, 0, 10000),
+    spikeWarn: numField('thSpikeWarn', 1, 0, 100),
+    spikeBad: numField('thSpikeBad', 5, 0, 100),
+    lossRunBad: Math.round(numField('thRunBad', 3, 0, 1000)),
+  };
   const auto = $('autostart').checked;
   if (auto !== state.autostart) { await V.setAutostart(auto); state.autostart = auto; }
   await V.setConfig({ targets: next, settings: state.settings });
@@ -548,6 +632,7 @@ async function init() {
 
   $('opacity').value = state.settings.opacity ?? 1;
   $('btnPin').classList.toggle('active', state.pin);
+  $('btnClip').classList.toggle('active', !!state.settings.clipOutliers);
 
   const first = activeTargets()[0];
   state.focusedId = first ? first.id : null;
@@ -566,7 +651,7 @@ async function init() {
     observeResize();
     refreshFocus();
   } else {
-    $('chartEmpty').textContent = 'No active targets. Open settings to add one.';
+    $('chartEmpty').textContent = 'No active hosts. Open settings to add one.';
   }
 
   setBodyCompact(state.compact);
@@ -580,6 +665,14 @@ async function init() {
   $('cvClose').addEventListener('click', () => V.close());
   $('btnGear').addEventListener('click', openSettings);
   $('addTarget').addEventListener('click', openSettings);
+  $('btnClip').addEventListener('click', async () => {
+    state.settings.clipOutliers = !state.settings.clipOutliers;
+    $('btnClip').classList.toggle('active', state.settings.clipOutliers);
+    if (chart) buildChart(chartHue); // re-range with/without the cap
+    refreshFocus();
+    try { await V.setConfig({ settings: state.settings }); } catch (_) {}
+  });
+  $('zoomHint').addEventListener('click', () => { setZoomed(false); refreshFocus(); });
   $('tgAdd').addEventListener('click', addTgRow);
   $('tgCancel').addEventListener('click', () => $('modalBg').classList.remove('open'));
   $('tgSave').addEventListener('click', saveSettings);

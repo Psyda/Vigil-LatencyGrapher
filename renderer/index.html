@@ -47,9 +47,9 @@
     <!-- main grid -->
     <div class="main">
       <div class="targets">
-        <div class="col-head"><span class="eyebrow">Targets</span></div>
+        <div class="col-head"><span class="eyebrow">Hosts</span></div>
         <div class="target-list" id="targetList"></div>
-        <button class="add-target" id="addTarget">+ Manage targets</button>
+        <button class="add-target" id="addTarget">+ Manage hosts</button>
       </div>
 
       <div class="focus">
@@ -57,9 +57,11 @@
           <div class="focus-bar">
             <div class="focus-title"><span class="dot" id="focusDot"></span><span id="focusName">—</span><span class="host" id="focusHost"></span></div>
             <div class="windows" id="windows"></div>
+            <button class="clip-toggle" id="btnClip" title="Cap the Y axis at the 99th percentile so rare spikes don't flatten the graph. Spikes are still recorded and shown, just clipped at the top.">clip spikes</button>
           </div>
           <div class="chart-wrap" id="chartWrap">
             <div class="empty" id="chartEmpty">collecting data…</div>
+            <button class="zoom-hint" id="zoomHint" title="Back to the full time window">zoomed · dbl-click to reset</button>
           </div>
           <div class="stats-strip" id="statsStrip"></div>
         </div>
@@ -103,18 +105,40 @@
   <!-- settings modal -->
   <div class="modal-bg" id="modalBg">
     <div class="modal">
-      <h2>Targets &amp; settings</h2>
-      <p class="hint">Each target is probed once per second. Use ICMP for raw reachability, or TCP against an open port (DNS:53, web:443, a game relay) when ICMP is filtered.</p>
+      <h2>Hosts &amp; settings</h2>
+      <p class="hint">Each host is probed on the interval set below. Use ICMP for raw reachability, or TCP against an open port (DNS:53, web:443, a game relay) when ICMP is filtered.</p>
       <div class="tg-row head">
         <span></span><span>Label</span><span>Host</span><span>Type</span><span>Port</span><span></span>
       </div>
       <div id="tgRows"></div>
-      <button class="btn ghost" id="tgAdd" style="margin-top:10px;">+ Add target</button>
+      <button class="btn ghost" id="tgAdd" style="margin-top:10px;">+ Add host</button>
+
+      <h3>Probing</h3>
+      <div class="field">
+        <label for="probeInterval">Seconds between probes</label>
+        <input type="number" id="probeInterval" min="0.5" max="60" step="0.5" />
+      </div>
 
       <h3>Readiness</h3>
       <div class="field">
         <label for="lookback">Lookback window (minutes)</label>
         <input type="number" id="lookback" min="1" max="60" step="1" />
+      </div>
+      <p class="hint" style="margin-bottom:8px">Verdict thresholds. A value is rated against the lookback window; "Marginal over" flips Clear to Marginal, "Unstable over" flips it to Unstable. With loss at 0, any lost probe rates Marginal.</p>
+      <div class="th-grid">
+        <span></span><span>Loss %</span><span>Jitter ms</span><span>Spike rate %</span>
+        <span class="th-label warn-t">Marginal over</span>
+        <input type="number" id="thLossWarn" min="0" max="100" step="0.1" />
+        <input type="number" id="thJitterWarn" min="0" step="1" />
+        <input type="number" id="thSpikeWarn" min="0" max="100" step="0.5" />
+        <span class="th-label bad-t">Unstable over</span>
+        <input type="number" id="thLossBad" min="0" max="100" step="0.1" />
+        <input type="number" id="thJitterBad" min="0" step="1" />
+        <input type="number" id="thSpikeBad" min="0" max="100" step="0.5" />
+      </div>
+      <div class="field">
+        <label for="thRunBad">Unstable after consecutive lost probes (0 = off)</label>
+        <input type="number" id="thRunBad" min="0" max="1000" step="1" />
       </div>
 
       <h3>System</h3>

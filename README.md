@@ -2,7 +2,7 @@
 
 A live network latency and packet-loss monitor for Windows, macOS, and Linux. It answers one question fast: is my connection clean enough to queue right now. It also keeps a full history so you can scrub back across minutes, days, or months and see exactly when things went bad.
 
-This is the `ping -t 8.8.8.8` habit turned into a real instrument. It watches several targets at once, keeps min, average, and max for every slice of time, and gives you a plain readiness verdict based on the last few minutes.
+This is the `ping -t 8.8.8.8` habit turned into a real instrument. It watches several hosts at once, keeps min, average, and max for every slice of time, and gives you a plain readiness verdict — Clear, Marginal, or Unstable — based on the last few minutes.
 
 ## Run it
 
@@ -19,25 +19,27 @@ To build a distributable installer (optional), `npm run dist` uses electron-buil
 
 ## How the probing works
 
-Vigil uses two probe types and you can mix them per target.
+Vigil uses two probe types and you can mix them per host.
 
-**ICMP.** For each ICMP target it launches one long-lived `ping` process and reads its output line by line. One process per target, alive for the whole session, so there is no per-probe process spawn cost. This is exactly your manual workflow, just parsed and recorded. ICMP is the most direct reachability signal but routers sometimes rate-limit or deprioritize it, so a clean ICMP result is necessary but not always sufficient.
+**ICMP.** For each ICMP host it launches one long-lived `ping` process and reads its output line by line. One process per host, alive for the whole session, so there is no per-probe process spawn cost. This is exactly your manual workflow, just parsed and recorded. ICMP is the most direct reachability signal but routers sometimes rate-limit or deprioritize it, so a clean ICMP result is necessary but not always sufficient.
 
-**TCP.** For each TCP target it opens a real socket to a host and port and times how long the connection takes. This needs an open port on the target. Good choices are DNS on port 53, a web host on 443, or a game relay. A refusal still counts as reachable, because a refusal is a real round trip, so the time to refusal is a valid latency sample. A genuine timeout counts as loss. TCP is often the better signal for "can I play," because it measures a real connection rather than an ICMP echo that the network may treat differently.
+**TCP.** For each TCP host it opens a real socket to a host and port and times how long the connection takes. This needs an open port on the host. Good choices are DNS on port 53, a web host on 443, or a game relay. A refusal still counts as reachable, because a refusal is a real round trip, so the time to refusal is a valid latency sample. A genuine timeout counts as loss. TCP is often the better signal for "can I play," because it measures a real connection rather than an ICMP echo that the network may treat differently.
 
-The four starting targets are your gateway (auto-detected on first run), Cloudflare at 1.1.1.1, Google DNS at 8.8.8.8, and a disabled game-server slot. Point that last one at your server or relay IP and switch it on. For most game servers the traffic is UDP, so use ICMP against the server IP, or TCP against a known open port on the same host or its relay.
+The probe cadence defaults to one probe per second and is adjustable in settings ("Seconds between probes", 0.5–60). One note for Windows: the system `ping` has no interval flag in continuous mode, so at any interval other than 1s Vigil switches ICMP hosts to one single-shot ping per interval, which costs a small process spawn per probe but keeps the timing honest.
+
+The four starting hosts are your gateway (auto-detected on first run), Cloudflare at 1.1.1.1, Google DNS at 8.8.8.8, and a disabled game-server slot. Point that last one at your server or relay IP and switch it on. For most game servers the traffic is UDP, so use ICMP against the server IP, or TCP against a known open port on the same host or its relay.
 
 ## Storage and the time windows
 
 Every probe is folded into three tiers as it arrives, so spikes survive aggregation instead of being averaged away.
 
-* Raw, one point per probe, kept about one hour. This drives the 10m and 1h views.
-* One-minute buckets with min, average, max, and loss, kept seven days. This drives the 10h through 7d views.
+* Raw, one point per probe, kept about two hours at the default interval. This drives the 10m and 1h views.
+* One-minute buckets with min, average, max, and loss, kept seven days. This drives the 2h through 7d views.
 * One-hour buckets, kept about three years. This drives the 30d, 1y, and All views.
 
 The coarse tiers are written to disk every 30 seconds and on quit, then reloaded on launch, so your day, week, and month history survives restarts. Raw is treated as throwaway and is not persisted.
 
-Two files are written to Electron's per-user data folder: `vigil-data.json` for the history and `vigil-config.json` for your targets and settings. The folder is `%APPDATA%\vigil\` on Windows, `~/Library/Application Support/vigil/` on macOS, and `~/.config/vigil/` on Linux. The name is `vigil` when run with `npm start` and becomes `Vigil` once packaged with electron-builder.
+Two files are written to Electron's per-user data folder: `vigil-data.json` for the history and `vigil-config.json` for your hosts and settings. The folder is `%APPDATA%\vigil\` on Windows, `~/Library/Application Support/vigil/` on macOS, and `~/.config/vigil/` on Linux. The name is `vigil` when run with `npm start` and becomes `Vigil` once packaged with electron-builder.
 
 ## Launch at startup
 
@@ -45,11 +47,17 @@ Open settings and tick "Launch at startup." It registers a login item on Windows
 
 ## The readiness verdict
 
-The verdict looks only at the last few minutes of raw data, since that is what matters before you queue. It weighs three things: packet loss, jitter measured as the average change between successive pings, and how often latency spikes well above the local norm. A single stray spike will not flip it to unstable. Sustained loss, high jitter, or frequent spikes will. You can change the lookback window in settings.
+The verdict looks only at the last few minutes of raw data, since that is what matters before you queue. It weighs three things: packet loss, jitter measured as the average change between successive pings, and how often latency spikes well above the local norm. A single stray spike will not flip it to Unstable. Sustained loss, high jitter, or frequent spikes will.
+
+Lost packets are treated as a first-class problem. By default any lost probe inside the lookback window rates at least Marginal, and a run of three or more consecutive lost probes — a real blackout, however brief — rates Unstable outright, regardless of what the overall loss percentage works out to. A prober that goes silent (no reply lines at all, e.g. a dead route) is counted as loss too, not ignored.
+
+All of the boundaries are adjustable in settings: the loss, jitter, and spike-rate thresholds for both Marginal and Unstable, the consecutive-loss rule, and the lookback window.
 
 ## Layout
 
-The big readout up top is the verdict for the focused target. The left column lists your targets with a live number, a sparkline, and current loss. Click one to focus it, or drag a row by the grip on its lower right to reorder the list. The main graph shows the focused target over the selected window as an average line inside a translucent min and max envelope, with packet loss drawn as red bands struck up from the baseline. Below it is a full stats strip. The pin button keeps the window above other windows, including a borderless game, and it stays put when you click it. Compact mode shrinks it to a small always-on-top overlay you can leave in a corner while you play. Closing the window hides it to the tray and keeps monitoring. Quit from the tray menu to stop.
+The big readout up top is the verdict for the focused host. The left column lists your hosts with a live number, a sparkline, and current loss. Click one to focus it, or drag a row by the grip on its lower right to reorder the list. The main graph shows the focused host over the selected window as an average line inside a translucent min and max envelope, with packet loss drawn as red bands struck up from the baseline. Below it is a full stats strip.
+
+Drag horizontally on the graph to zoom into a region; the view holds while new probes arrive, and double-clicking the chart (or the "zoomed" pill) returns to the live window. The "clip spikes" toggle next to the window tabs caps the Y axis at the 99th percentile of the visible data, so one 900ms outlier cannot flatten a sustained 150ms problem into the baseline — outliers stay in the data and draw clipped at the top edge. The pin button keeps the window above other windows, including a borderless game, and it stays put when you click it. Compact mode shrinks it to a small always-on-top overlay you can leave in a corner while you play. Closing the window hides it to the tray and keeps monitoring. Quit from the tray menu to stop.
 
 ## Exporting a report for analysis
 
@@ -96,7 +104,7 @@ main.js            Electron main: window, tray, persistence, IPC, probe orchestr
 preload.js         Safe IPC bridge to the renderer
 src/probe.js       TCP and persistent-ICMP probers
 src/store.js       Tiered ring-buffer store, rollups, and stats
-src/config.js      Default targets, windows, settings
+src/config.js      Default hosts, windows, settings
 src/sysinfo.js     Best-effort default-gateway detection
 renderer/          UI: index.html, app.js, styles.css, vendored uPlot
 ```

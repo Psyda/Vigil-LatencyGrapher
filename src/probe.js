@@ -19,25 +19,62 @@ function parsePingLine(line) {
   return undefined;
 }
 
-function buildPingArgs(host, timeoutMs, size) {
+function buildPingArgs(host, timeoutMs, size, intervalMs) {
+  const sec = (intervalMs || 1000) / 1000;
   if (process.platform === 'win32') {
     return ['-t', '-w', String(timeoutMs), '-l', String(size || 32), host];
   }
   if (process.platform === 'darwin') {
-    // macOS ping has no -O; lost packets are not line-reported (loss approximate)
-    return ['-i', '1', host];
+    // macOS ping has no -O; lost packets are not line-reported (loss approximate).
+    // Sub-second intervals need root there, so clamp to >= 1s.
+    return ['-i', String(Math.max(1, Math.round(sec))), host];
   }
   // Linux: -O reports a line per outstanding/lost packet so loss is accurate
-  return ['-O', '-i', '1', '-W', String(Math.max(1, Math.round(timeoutMs / 1000))), host];
+  return ['-O', '-i', String(Math.max(0.2, sec)), '-W', String(Math.max(1, Math.round(timeoutMs / 1000))), host];
+}
+
+// Windows ping has no interval flag: -t mode is locked to ~1 probe/s. For any
+// other cadence, fall back to one single-shot `ping -n 1` per interval. Costs
+// a process spawn per probe, which is fine at the >= 0.5s intervals we allow.
+function startIcmpOneShotProber(t, emit) {
+  let stopped = false;
+  let inFlight = false;
+
+  const probe = () => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    const child = spawn('ping', ['-n', '1', '-w', String(t.timeoutMs), '-l', String(t.size || 32), t.host], { windowsHide: true });
+    let out = '';
+    const onData = (chunk) => { out += chunk.toString(); };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.on('error', () => { inFlight = false; /* ping binary missing */ });
+    child.on('exit', () => {
+      inFlight = false;
+      if (stopped) return;
+      for (const line of out.split(/\r?\n/)) {
+        const v = parsePingLine(line);
+        if (v !== undefined) { emit(t.id, Date.now(), v); return; }
+      }
+      emit(t.id, Date.now(), null); // no parseable result line -> lost
+    });
+  };
+
+  const iv = setInterval(probe, t.intervalMs || 1000);
+  probe();
+  return () => { stopped = true; clearInterval(iv); };
 }
 
 function startIcmpProber(t, emit) {
+  if (process.platform === 'win32' && Math.abs((t.intervalMs || 1000) - 1000) > 50) {
+    return startIcmpOneShotProber(t, emit);
+  }
   let child = null;
   let stopped = false;
 
   const launch = () => {
     if (stopped) return;
-    child = spawn('ping', buildPingArgs(t.host, t.timeoutMs, t.size), { windowsHide: true });
+    child = spawn('ping', buildPingArgs(t.host, t.timeoutMs, t.size, t.intervalMs), { windowsHide: true });
     let buf = '';
     const onData = (chunk) => {
       buf += chunk.toString();
