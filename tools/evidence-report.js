@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { normalizeDataFile } = require(require('path').join(__dirname, '..', 'src', 'datafmt.js'));
 
 // Vigil evidence report generator.
 //
@@ -462,8 +463,9 @@ ${sections}
 // ---- main -------------------------------------------------------------------
 const raw = JSON.parse(fs.readFileSync(inPath, 'utf8'));
 let model;
+const asStore = raw && raw.targets ? normalizeDataFile(raw) : null;
 if (raw && raw.meta && raw.meta.schema === 'vigil-report/1') model = loadReportSchema(raw);
-else if (raw && raw.v === 1 && raw.targets) model = loadStoreSchema(raw);
+else if (asStore) model = loadStoreSchema(asStore);
 else { console.error('Unrecognized input. Provide report.json (from export-report.js) or vigil-data.json.'); process.exit(1); }
 
 if (!model.targets.length) { console.error('No matching targets in input.'); process.exit(1); }

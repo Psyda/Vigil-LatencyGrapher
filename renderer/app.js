@@ -14,6 +14,7 @@ const state = {
   targets: [],
   settings: {
     readinessLookbackMin: 5, probeIntervalSec: 1, clipOutliers: false,
+    zonesEnabled: false, zoneMidMs: 80, zoneHighMs: 100,
     thresholds: { ...DEFAULT_THRESHOLDS }, opacity: 1, alwaysOnTop: false,
   },
   focusedId: null,
@@ -103,6 +104,44 @@ function drawSpark(canvas, values, hue) {
 }
 
 // ---- uPlot chart ----------------------------------------------------------
+
+// Experimental latency zones: tint the moderate and high bands of the Y axis
+// so "small" spikes that still cross the boundaries stand out next to a big
+// outlier. Runs in drawClear so it sits behind the series and loss bands.
+function zonesPlugin() {
+  return {
+    hooks: {
+      drawClear: (u) => {
+        if (!state.settings.zonesEnabled) return;
+        const mid = state.settings.zoneMidMs, high = state.settings.zoneHighMs;
+        const { left, top, width, height } = u.bbox;
+        const bottom = top + height;
+        const ctx = u.ctx;
+        const yPos = (v) => u.valToPos(v, 'y', true);
+        ctx.save();
+        const band = (vLo, vHi, color) => {
+          const yTop = vHi == null ? top : Math.max(top, yPos(vHi));
+          const yBot = Math.min(bottom, vLo == null ? bottom : yPos(vLo));
+          if (yBot - yTop > 0.5) { ctx.fillStyle = color; ctx.fillRect(left, yTop, width, yBot - yTop); }
+        };
+        band(mid, high, hexA('#e0af68', 0.05));
+        band(high, null, hexA('#f7768e', 0.05));
+        // faint boundary lines where they fall inside the plot
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        for (const [v, hue] of [[mid, '#e0af68'], [high, '#f7768e']]) {
+          const y = yPos(v);
+          if (y > top + 1 && y < bottom - 1) {
+            ctx.strokeStyle = hexA(hue, 0.22);
+            ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+          }
+        }
+        ctx.restore();
+      },
+    },
+  };
+}
+
 function lossBandsPlugin() {
   return {
     hooks: {
@@ -176,11 +215,32 @@ function setZoomed(v) {
   $('zoomHint').classList.toggle('show', v);
 }
 
+// Market-style manual Y scale: drag or scroll on the axis numbers to set it,
+// click the corner lock to return to auto. null = auto. Survives host and
+// window switches so different timescales can be read against one scale.
+let yManual = null;
+function setYManual(v) {
+  yManual = Math.min(1000, Math.max(5, v));
+  const b = $('btnScaleLock');
+  b.classList.add('unlocked');
+  b.title = 'Y scale: manual 0–' + Math.round(yManual) + 'ms — click to re-lock to auto';
+  if (chart) chart.setScale('y', { min: 0, max: yManual });
+}
+function clearYManual() {
+  yManual = null;
+  const b = $('btnScaleLock');
+  b.classList.remove('unlocked');
+  b.title = 'Y scale: auto — drag the axis numbers or click to set manually';
+  // re-run auto ranging over the currently visible x window
+  if (chart) chart.setScale('x', { min: chart.scales.x.min, max: chart.scales.x.max });
+}
+
 // Y range for the main chart. With "clip spikes" on, the top of the scale is
 // capped at the 99th percentile of the visible envelope so a single 900ms
 // outlier can't compress a real 150ms problem into the baseline. Outliers are
 // still in the data and draw clipped at the top edge.
 function chartYRange(u, dMin, dMax) {
+  if (yManual != null) return [0, yManual];
   if (dMin == null || dMax == null) return [0, 100];
   let lo = dMin, hi = dMax;
   if (state.settings.clipOutliers) {
@@ -238,7 +298,7 @@ function buildChart(hue) {
       },
     ],
     legend: { show: false },
-    plugins: [lossBandsPlugin(), tooltipPlugin()],
+    plugins: [zonesPlugin(), lossBandsPlugin(), tooltipPlugin()],
   };
   chart = new uPlot(opts, [[], [], [], []], $('chartWrap'));
 }
@@ -522,11 +582,63 @@ function updateCompact(live, ready) {
 }
 
 // ---- settings modal -------------------------------------------------------
+
+// Snapshot of every form field, taken when the modal opens. Clicking off or
+// pressing Escape with a differing snapshot asks save-or-discard instead of
+// silently throwing the changes away.
+let settingsSnap = null;
+
+function settingsSnapshot() {
+  const rows = [...$('tgRows').children].map((row) => [
+    row.dataset.id,
+    row.querySelector('.f-label').value,
+    row.querySelector('.f-host').value,
+    row.querySelector('.f-type').value,
+    row.querySelector('.f-port').value,
+    row.querySelector('.chk').checked,
+  ]);
+  const fields = ['probeInterval', 'zonesOn', 'zoneMid', 'zoneHigh', 'lookback',
+    'thLossWarn', 'thLossBad', 'thJitterWarn', 'thJitterBad', 'thSpikeWarn', 'thSpikeBad', 'thRunBad',
+    'autostart', 'archiveRaw'].map((id) => {
+    const el = $(id);
+    return el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return JSON.stringify([rows, fields]);
+}
+
+function showUnsaved() {
+  $('unsavedNote').classList.add('show');
+  $('tgCancel').textContent = 'Discard';
+  const act = document.querySelector('.modal-actions');
+  act.classList.remove('pulse');
+  void act.offsetWidth; // restart the animation on repeat offenders
+  act.classList.add('pulse');
+}
+
+function hideUnsaved() {
+  $('unsavedNote').classList.remove('show');
+  $('tgCancel').textContent = 'Cancel';
+  document.querySelector('.modal-actions').classList.remove('pulse');
+}
+
+function closeSettingsDiscard() {
+  $('modalBg').classList.remove('open');
+  hideUnsaved();
+}
+
+function tryCloseSettings() {
+  if (settingsSnap !== null && settingsSnapshot() !== settingsSnap) showUnsaved();
+  else closeSettingsDiscard();
+}
+
 function openSettings() {
   const rows = $('tgRows');
   rows.innerHTML = '';
   state.targets.forEach((t) => rows.appendChild(makeTgRow(t)));
   $('probeInterval').value = state.settings.probeIntervalSec ?? 1;
+  $('zonesOn').checked = !!state.settings.zonesEnabled;
+  $('zoneMid').value = state.settings.zoneMidMs ?? 80;
+  $('zoneHigh').value = state.settings.zoneHighMs ?? 100;
   $('lookback').value = state.settings.readinessLookbackMin;
   const th = { ...DEFAULT_THRESHOLDS, ...(state.settings.thresholds || {}) };
   $('thLossWarn').value = th.lossWarn; $('thLossBad').value = th.lossBad;
@@ -534,7 +646,10 @@ function openSettings() {
   $('thSpikeWarn').value = th.spikeWarn; $('thSpikeBad').value = th.spikeBad;
   $('thRunBad').value = th.lossRunBad;
   $('autostart').checked = state.autostart;
+  $('archiveRaw').checked = state.settings.archiveRaw !== false;
+  hideUnsaved();
   $('modalBg').classList.add('open');
+  settingsSnap = settingsSnapshot();
 }
 function makeTgRow(t) {
   const row = document.createElement('div');
@@ -581,6 +696,9 @@ async function saveSettings() {
   });
   state.targets = next;
   state.settings.probeIntervalSec = numField('probeInterval', 1, 0.5, 60);
+  state.settings.zonesEnabled = $('zonesOn').checked;
+  state.settings.zoneMidMs = numField('zoneMid', 80, 1, 2000);
+  state.settings.zoneHighMs = Math.max(state.settings.zoneMidMs + 1, numField('zoneHigh', 100, 2, 3000));
   state.settings.readinessLookbackMin = Math.min(60, Math.max(1, parseInt($('lookback').value, 10) || 5));
   state.settings.thresholds = {
     lossWarn: numField('thLossWarn', 0, 0, 100),
@@ -591,10 +709,12 @@ async function saveSettings() {
     spikeBad: numField('thSpikeBad', 5, 0, 100),
     lossRunBad: Math.round(numField('thRunBad', 3, 0, 1000)),
   };
+  state.settings.archiveRaw = $('archiveRaw').checked;
   const auto = $('autostart').checked;
   if (auto !== state.autostart) { await V.setAutostart(auto); state.autostart = auto; }
   await V.setConfig({ targets: next, settings: state.settings });
   $('modalBg').classList.remove('open');
+  hideUnsaved();
   // ensure focus is still valid
   if (!activeTargets().some((t) => t.id === state.focusedId)) {
     const first = activeTargets()[0];
@@ -673,12 +793,33 @@ async function init() {
     try { await V.setConfig({ settings: state.settings }); } catch (_) {}
   });
   $('zoomHint').addEventListener('click', () => { setZoomed(false); refreshFocus(); });
+  $('btnScaleLock').addEventListener('click', () => {
+    if (yManual != null) clearYManual();
+    else if (chart && chart.scales.y && chart.scales.y.max != null) setYManual(chart.scales.y.max);
+  });
+  const grab = $('yaxisGrab');
+  grab.addEventListener('pointerdown', (e) => {
+    if (!chart || e.button !== 0) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startMax = yManual != null ? yManual : (chart.scales.y.max || 100);
+    const move = (ev) => setYManual(startMax * Math.exp((ev.clientY - startY) / 150));
+    try { grab.setPointerCapture(e.pointerId); } catch (_) {}
+    grab.addEventListener('pointermove', move);
+    grab.addEventListener('pointerup', () => grab.removeEventListener('pointermove', move), { once: true });
+  });
+  grab.addEventListener('wheel', (e) => {
+    if (!chart) return;
+    e.preventDefault();
+    const cur = yManual != null ? yManual : (chart.scales.y.max || 100);
+    setYManual(cur * (e.deltaY > 0 ? 1.15 : 1 / 1.15));
+  }, { passive: false });
   $('tgAdd').addEventListener('click', addTgRow);
-  $('tgCancel').addEventListener('click', () => $('modalBg').classList.remove('open'));
+  $('tgCancel').addEventListener('click', closeSettingsDiscard);
   $('tgSave').addEventListener('click', saveSettings);
-  $('modalBg').addEventListener('click', (e) => { if (e.target === $('modalBg')) $('modalBg').classList.remove('open'); });
+  $('modalBg').addEventListener('click', (e) => { if (e.target === $('modalBg')) tryCloseSettings(); });
   $('opacity').addEventListener('input', (e) => V.setOpacity(parseFloat(e.target.value)));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('modalBg').classList.remove('open'); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('modalBg').classList.contains('open')) tryCloseSettings(); });
 
   V.onTick((data) => applyTick(data));
   V.onMode((m) => setBodyCompact(m.compact));

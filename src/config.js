@@ -45,7 +45,11 @@ const DEFAULT_THRESHOLDS = {
 const DEFAULT_SETTINGS = {
   readinessLookbackMin: 5,
   probeIntervalSec: 1,
+  archiveRaw: true,
   clipOutliers: false,
+  zonesEnabled: false,   // experimental latency-zone tinting on the graph
+  zoneMidMs: 80,         // moderate zone starts here
+  zoneHighMs: 100,       // high zone starts here
   thresholds: { ...DEFAULT_THRESHOLDS },
   opacity: 1,
   alwaysOnTop: false,

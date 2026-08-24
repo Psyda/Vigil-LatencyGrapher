@@ -37,9 +37,29 @@ Every probe is folded into three tiers as it arrives, so spikes survive aggregat
 * One-minute buckets with min, average, max, and loss, kept seven days. This drives the 2h through 7d views.
 * One-hour buckets, kept about three years. This drives the 30d, 1y, and All views.
 
-The coarse tiers are written to disk every 30 seconds and on quit, then reloaded on launch, so your day, week, and month history survives restarts. Raw is treated as throwaway and is not persisted.
+All three tiers are written to disk every 30 seconds and on quit, then reloaded on launch, so the 10m and 1h views (and the readiness verdict) are populated the moment the app starts, and your day, week, and month history survives restarts.
+
+The snapshot is versioned (currently v2, position-encoded entries; v1 files from older builds load transparently) and written atomically — a temp file is renamed over the old one, so a crash mid-save can never leave a torn file. On every successful load the app also drops a `vigil-data.bak.json` last-known-good copy; a file it cannot read is preserved under a `.corrupt-` or `.incompatible-` name rather than overwritten.
 
 Two files are written to Electron's per-user data folder: `vigil-data.json` for the history and `vigil-config.json` for your hosts and settings. The folder is `%APPDATA%\vigil\` on Windows, `~/Library/Application Support/vigil/` on macOS, and `~/.config/vigil/` on Linux. The name is `vigil` when run with `npm start` and becomes `Vigil` once packaged with electron-builder.
+
+## The raw archive: every probe, forever
+
+Independent of the capped snapshot, Vigil keeps a permanent archive of every single probe ("Archive every probe to daily files" in settings, on by default). It lives in `raw-archive/` next to the data file, one file per UTC day: today is plain JSONL that gets appended about once a minute, and each finished day is gzipped once and never touched again. Being append-only, the worst a crash can do is truncate the final line, which readers skip; recorded history is never rewritten.
+
+The encoding squeezes out the domain redundancy before gzip ever sees it. Timestamps are implicit — a line carries a start time and the probe interval, and each sample occupies the next slot, with an explicit `@+2.5`-style resync marker whenever real arrival drifts more than two seconds, so decoded times are always within ~2s of reality. Stable stretches run-length-encode (`21x47` is forty-seven consecutive 21ms probes; `L` is a lost one), RTTs are rounded to 0.1ms, and the daily gzip pass compresses the remaining repetition across lines. A line looks like:
+
+```
+{"v":1,"id":"cf","t0":1756000000000,"iv":1000,"n":60,"s":"21x5 L 22 21x12 @+2.5 19x41"}
+```
+
+Measured against real recorded traffic, a day of four hosts probed every second lands around 300 KB gzipped — roughly 100 MB per year, about 1 GB per decade, 27x smaller than plain JSON. `tools/raw-archive.js` reads it back:
+
+```bash
+node tools/raw-archive.js stats                     # per-day summary
+node tools/raw-archive.js verify                    # decode everything, report damage
+node tools/raw-archive.js export --day 2026-08-23 --target cf --csv > cf.csv
+```
 
 ## Launch at startup
 
@@ -57,7 +77,9 @@ All of the boundaries are adjustable in settings: the loss, jitter, and spike-ra
 
 The big readout up top is the verdict for the focused host. The left column lists your hosts with a live number, a sparkline, and current loss. Click one to focus it, or drag a row by the grip on its lower right to reorder the list. The main graph shows the focused host over the selected window as an average line inside a translucent min and max envelope, with packet loss drawn as red bands struck up from the baseline. Below it is a full stats strip.
 
-Drag horizontally on the graph to zoom into a region; the view holds while new probes arrive, and double-clicking the chart (or the "zoomed" pill) returns to the live window. The "clip spikes" toggle next to the window tabs caps the Y axis at the 99th percentile of the visible data, so one 900ms outlier cannot flatten a sustained 150ms problem into the baseline — outliers stay in the data and draw clipped at the top edge. The pin button keeps the window above other windows, including a borderless game, and it stays put when you click it. Compact mode shrinks it to a small always-on-top overlay you can leave in a corner while you play. Closing the window hides it to the tray and keeps monitoring. Quit from the tray menu to stop.
+Drag horizontally on the graph to zoom into a region; the view holds while new probes arrive, and double-clicking the chart (or the "zoomed" pill) returns to the live window. The "clip spikes" toggle next to the window tabs caps the Y axis at the 99th percentile of the visible data, so one 900ms outlier cannot flatten a sustained 150ms problem into the baseline — outliers stay in the data and draw clipped at the top edge.
+
+The Y scale can also be taken manual, market-style: drag or scroll on the axis numbers to set the range (0 up to 1000ms), shown by the small lock icon in the lower-left corner of the chart turning open. A manual scale survives switching hosts and time windows, which makes readings comparable across timescales; click the lock to return to auto. And under Graph in settings there is an experimental latency-zones overlay (off by default): it tints the chart background above two customizable boundaries — moderate from 80ms, high from 100ms by default — so on a zoomed-out month view the many "small" 150ms spikes read as clearly in the high zone even when an 800ms outlier dominates the scale. The pin button keeps the window above other windows, including a borderless game, and it stays put when you click it. Compact mode shrinks it to a small always-on-top overlay you can leave in a corner while you play. Closing the window hides it to the tray and keeps monitoring. Quit from the tray menu to stop.
 
 ## Exporting a report for analysis
 
@@ -105,6 +127,9 @@ preload.js         Safe IPC bridge to the renderer
 src/probe.js       TCP and persistent-ICMP probers
 src/store.js       Tiered ring-buffer store, rollups, and stats
 src/config.js      Default hosts, windows, settings
+src/datafmt.js     Snapshot format versions (v1/v2) and the shared normalizer
+src/rawlog.js      Raw-archive line codec (run-length + implicit time)
+src/archiver.js    Append-only daily raw archive with gzip rotation
 src/sysinfo.js     Best-effort default-gateway detection
 renderer/          UI: index.html, app.js, styles.css, vendored uPlot
 ```

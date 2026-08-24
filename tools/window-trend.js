@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { normalizeDataFile } = require(require('path').join(__dirname, '..', 'src', 'datafmt.js'));
 
 // Vigil window trend — did my fix actually do anything?
 //
@@ -70,8 +71,8 @@ function main() {
     console.error('Could not find vigil-data.json. Pass --in <path>.');
     process.exit(1);
   }
-  const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  if (!data || data.v !== 1) { console.error('Unrecognized data file.'); process.exit(1); }
+  const data = normalizeDataFile(JSON.parse(fs.readFileSync(dataPath, 'utf8')));
+  if (!data) { console.error('Unrecognized data file.'); process.exit(1); }
 
   let cfgTargets = [];
   try {

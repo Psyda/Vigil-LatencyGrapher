@@ -14,6 +14,7 @@
 //   total = count + lost, avg = sum / count, loss% = lost / total * 100.
 
 const { DEFAULT_THRESHOLDS } = require('./config.js');
+const { packBucket, normalizeDataFile, r2 } = require('./datafmt.js');
 
 const RAW_CAP = 7200;        // ~2 hours at the default 1s probe interval
 const MIN1_CAP = 10080;      // 7 days of minutes
@@ -203,22 +204,33 @@ class Store {
     return out;
   }
 
+  // v2 snapshot: position-encoded entries (see src/datafmt.js), all floats
+  // rounded to 2 decimals. Raw is persisted so the 10m / 1h views and the
+  // readiness verdict are populated immediately after a restart.
   serialize() {
     const out = {};
     for (const [id, t] of this.targets) {
-      // raw is ephemeral; persist only the coarse tiers
-      out[id] = { min1: t.min1, hour1: t.hour1 };
+      out[id] = {
+        raw: t.raw.map((s) => [s.t, s.v === null ? null : r2(s.v)]),
+        min1: t.min1.map(packBucket),
+        hour1: t.hour1.map(packBucket),
+      };
     }
-    return { v: 1, savedAt: Date.now(), targets: out };
+    return { v: 2, savedAt: Date.now(), targets: out };
   }
 
+  // Accepts v1 or v2 files. Returns false for anything unrecognized so the
+  // caller can preserve the file instead of overwriting it.
   load(data) {
-    if (!data || data.v !== 1 || !data.targets) return;
-    for (const [id, t] of Object.entries(data.targets)) {
+    const norm = normalizeDataFile(data);
+    if (!norm) return false;
+    for (const [id, t] of Object.entries(norm.targets)) {
       const tgt = this.ensure(id);
-      tgt.min1 = Array.isArray(t.min1) ? t.min1.slice(-MIN1_CAP) : [];
-      tgt.hour1 = Array.isArray(t.hour1) ? t.hour1.slice(-HOUR1_CAP) : [];
+      tgt.raw = t.raw.slice(-RAW_CAP);
+      tgt.min1 = t.min1.slice(-MIN1_CAP);
+      tgt.hour1 = t.hour1.slice(-HOUR1_CAP);
     }
+    return true;
   }
 }
 

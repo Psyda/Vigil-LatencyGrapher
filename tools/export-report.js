@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { normalizeDataFile } = require(require('path').join(__dirname, '..', 'src', 'datafmt.js'));
 
 // Vigil report exporter.
 //
@@ -239,8 +240,8 @@ function main() {
     console.error('Looked in:\n  ' + candidatePaths().join('\n  '));
     process.exit(1);
   }
-  const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  if (!data || data.v !== 1 || !data.targets) {
+  const data = normalizeDataFile(JSON.parse(fs.readFileSync(dataPath, 'utf8')));
+  if (!data) {
     console.error('Unrecognized data file format at ' + dataPath);
     process.exit(1);
   }

@@ -9,11 +9,13 @@ const { ProbeEngine } = require('./src/probe.js');
 const { defaultTargets, DEFAULT_SETTINGS, DEFAULT_THRESHOLDS } = require('./src/config.js');
 const { detectGateway } = require('./src/sysinfo.js');
 const autostart = require('./src/autostart.js');
+const { RawArchiver } = require('./src/archiver.js');
 
 let win = null;
 let tray = null;
 const store = new Store();
 const engine = new ProbeEngine();
+const archiver = new RawArchiver();
 
 let targets = defaultTargets();
 let settings = { ...DEFAULT_SETTINGS };
@@ -41,12 +43,34 @@ function saveConfig() {
   try { fs.writeFileSync(configPath(), JSON.stringify({ targets, settings }, null, 2)); } catch (_) {}
 }
 
+// Load the snapshot; never destroy what we cannot read. A file that parses
+// and loads gets a .bak copy (last-known-good). A file that does not is
+// preserved under a .corrupt-/.incompatible- name before we continue empty,
+// so the 30s save loop cannot overwrite the only copy.
 function loadStore() {
-  try { store.load(JSON.parse(fs.readFileSync(storePath(), 'utf8'))); } catch (_) {}
+  const p = storePath();
+  let text = null;
+  try { text = fs.readFileSync(p, 'utf8'); } catch (_) { return; } // first run
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch (_) {
+    try { fs.copyFileSync(p, p.slice(0, -5) + '.corrupt-' + Date.now() + '.json'); } catch (_) {}
+    return;
+  }
+  if (store.load(parsed)) {
+    try { fs.copyFileSync(p, p.slice(0, -5) + '.bak.json'); } catch (_) {}
+  } else {
+    // parses but unknown version (e.g. written by a newer build)
+    try { fs.copyFileSync(p, p.slice(0, -5) + '.incompatible-' + Date.now() + '.json'); } catch (_) {}
+  }
 }
 
+// Atomic write: a crash mid-save leaves the old file intact, never a torn one.
 function saveStore() {
-  try { fs.writeFileSync(storePath(), JSON.stringify(store.serialize())); } catch (_) {}
+  try {
+    const p = storePath();
+    fs.writeFileSync(p + '.tmp', JSON.stringify(store.serialize()));
+    fs.renameSync(p + '.tmp', p);
+  } catch (_) {}
 }
 
 // --- tray status dot --------------------------------------------------------
@@ -207,11 +231,14 @@ function effectiveTargets() {
 const readinessOpts = () => ({ intervalMs: effectiveIntervalMs(), thresholds: settings.thresholds });
 
 function applyTargets() {
-  engine.setTargets(effectiveTargets());
+  const list = effectiveTargets();
+  archiver.setHosts(list, effectiveIntervalMs());
+  engine.setTargets(list);
 }
 
 engine.on('sample', (id, t, v) => {
   store.addSample(id, t, v);
+  if (settings.archiveRaw !== false) archiver.add(id, t, v);
 });
 
 function tick() {
@@ -291,6 +318,8 @@ if (!gotLock) {
       else gw.enabled = false;
     }
 
+    archiver.init(path.join(userDir(), 'raw-archive'));
+
     createWindow();
 
     try {
@@ -308,5 +337,5 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => { /* stay alive in tray; quit handled via tray menu */ });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showWindow(); });
-  app.on('before-quit', () => { app.isQuitting = true; engine.stop(); saveStore(); saveConfig(); });
+  app.on('before-quit', () => { app.isQuitting = true; engine.stop(); archiver.stop(); saveStore(); saveConfig(); });
 }
