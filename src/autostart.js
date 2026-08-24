@@ -58,6 +58,15 @@ function setAutostart(enabled) {
 function getAutostart() {
   try {
     if (process.platform === 'linux') return fs.existsSync(LINUX_DESKTOP);
+    // On Windows the entry is registered with args, and detection only
+    // matches when queried with the same args. This also recognizes the
+    // entry the installer writes, which uses the identical command line.
+    if (process.platform === 'win32') {
+      const opts = app.isPackaged
+        ? { args: ['--hidden'] }
+        : { path: process.execPath, args: launchArgs() };
+      return app.getLoginItemSettings(opts).openAtLogin;
+    }
     return app.getLoginItemSettings().openAtLogin;
   } catch (_) {
     return false;

@@ -18,7 +18,17 @@ This is the `ping -t 8.8.8.8` habit turned into a real instrument. It watches se
 </p>
 <p align="center"><sub>Screenshots show generated demo data.</sub></p>
 
-## Run it
+## Get it
+
+Grab a release build if you just want the app. No Node, npm, or admin rights involved.
+
+* **Vigil-<version>-Setup.exe** installs per user and offers to start Vigil at sign-in, checked by default, since unbroken background monitoring is the whole point.
+* **Vigil-<version>-Portable.exe** is a single file you can run from anywhere, nothing gets installed.
+* **Vigil-<version>-win.zip** is the plain app folder if you prefer to extract and run `Vigil.exe` yourself.
+
+The builds are unsigned, so Windows SmartScreen will warn the first time. Click "More info" then "Run anyway". All three share the same data folder, so your history follows you between them.
+
+## Run from source
 
 You need Node.js 18 or newer.
 
@@ -29,7 +39,7 @@ npm start
 
 That launches the app. No administrator or root privileges are required.
 
-To build a distributable installer (optional), `npm run dist` uses electron-builder. You may want to add an icon and adjust the `build` block in `package.json` first.
+To build the release artifacts yourself, double-click `packaging/make-release.cmd` (or run `npm run dist`). The installer, portable exe, and zip land in `release/`, named with the version from `package.json`. See [packaging/](packaging/README.md) for details.
 
 ## How the probing works
 
@@ -55,7 +65,7 @@ All three tiers are written to disk every 30 seconds and on quit, then reloaded 
 
 The snapshot is versioned (currently v2 with position-encoded entries, and v1 files from older builds load transparently) and written atomically: a temp file is renamed over the old one, so a crash mid-save can never leave a torn file. On every successful load the app also drops a `vigil-data.bak.json` last-known-good copy, and a file it cannot read is preserved under a `.corrupt-` or `.incompatible-` name rather than overwritten.
 
-Two files are written to Electron's per-user data folder: `vigil-data.json` for the history and `vigil-config.json` for your hosts and settings. The folder is `%APPDATA%\vigil\` on Windows, `~/Library/Application Support/vigil/` on macOS, and `~/.config/vigil/` on Linux. The name is `vigil` when run with `npm start` and becomes `Vigil` once packaged with electron-builder.
+Two files are written to Electron's per-user data folder: `vigil-data.json` for the history and `vigil-config.json` for your hosts and settings. The folder is `%APPDATA%\Vigil\` on Windows, `~/Library/Application Support/Vigil/` on macOS, and `~/.config/Vigil/` on Linux.
 
 ## The raw archive: every probe, forever
 
@@ -77,7 +87,7 @@ node tools/raw-archive.js export --day 2026-08-23 --target cf --csv > cf.csv
 
 ## Launch at startup
 
-Open settings and tick "Launch at startup." It registers a login item on Windows and macOS, and writes a `.desktop` entry to `~/.config/autostart/` on Linux. An auto-started instance opens straight to the tray rather than popping the window, so monitoring begins quietly at login and you click the tray icon when you want the full view. This takes effect for the installed build. In dev mode the login item points at the electron binary plus the project path, which works but is mainly useful once you package the app.
+The installer offers this during setup with the box checked, and you can change it any time: open settings and tick "Launch at startup." It registers a login item on Windows and macOS, and writes a `.desktop` entry to `~/.config/autostart/` on Linux. The installer, the in-app toggle, and the uninstaller all manage the same entry. An auto-started instance opens straight to the tray rather than popping the window, so monitoring begins quietly at login and you click the tray icon when you want the full view. This takes effect for the installed build. In dev mode the login item points at the electron binary plus the project path, which works but is mainly useful once you package the app.
 
 ## The readiness verdict
 

@@ -1,26 +1,60 @@
 {
   "name": "vigil",
-  "version": "1.0.0",
+  "productName": "Vigil",
+  "version": "1.1.0",
   "description": "Live network latency and packet-loss monitor with an at-a-glance readiness verdict.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "electron-builder --win"
   },
-  "author": "",
+  "author": "Travis S",
   "license": "MIT",
   "dependencies": {
     "uplot": "1.6.31"
   },
   "devDependencies": {
-    "electron": "^42.5.0"
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.vigil.monitor",
     "productName": "Vigil",
-    "files": ["main.js", "preload.js", "src/**", "renderer/**", "node_modules/**"],
-    "win": { "target": "nsis" },
-    "mac": { "target": "dmg" },
-    "linux": { "target": "AppImage" }
+    "directories": {
+      "buildResources": "packaging",
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "renderer/**",
+      "node_modules/**"
+    ],
+    "win": {
+      "target": ["nsis", "portable", "zip"],
+      "icon": "packaging/icon.ico",
+      "artifactName": "Vigil-${version}-win.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Vigil-${version}-Setup.${ext}",
+      "include": "packaging/installer.nsh",
+      "shortcutName": "Vigil"
+    },
+    "portable": {
+      "artifactName": "Vigil-${version}-Portable.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "packaging/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "packaging/icon.png",
+      "category": "Network"
+    }
   }
 }

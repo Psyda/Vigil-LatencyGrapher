@@ -42,3 +42,5 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+# Release artifacts
+release/
