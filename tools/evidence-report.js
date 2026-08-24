@@ -271,7 +271,7 @@ function chartDaily(daily, w = 860, h = 240) {
     if (i % step !== 0 && i !== daily.length - 1) return;
     out += `<text x="${xs(i)}" y="${h - 8}" font-size="10" fill="${C.text}" text-anchor="middle">${d.date.slice(5)}</text>`;
   });
-  out += `<text x="${padL}" y="${padT - 2}" font-size="10" fill="${C.text}">ms — daily average (line) with daily maximum (shaded), daily packet loss below (red)</text>`;
+  out += `<text x="${padL}" y="${padT - 2}" font-size="10" fill="${C.text}">ms · daily average (line) with daily maximum (shaded), daily packet loss below (red)</text>`;
   return out + '</svg>';
 }
 
@@ -335,7 +335,7 @@ function chartMinutes(rows, title, w = 860, h = 200) {
     const tt = t0 + ((t1 - t0) / 6) * g;
     out += `<text x="${xs(tt)}" y="${h - 8}" font-size="9" fill="${C.text}" text-anchor="middle">${fmtLocal(tt).slice(11)}</text>`;
   }
-  out += `<text x="${padL}" y="${padT - 4}" font-size="10" fill="${C.text}">${esc(title)} — per-minute avg (line), min–max (shaded), red bands = packet loss (local time)</text>`;
+  out += `<text x="${padL}" y="${padT - 4}" font-size="10" fill="${C.text}">${esc(title)} · per-minute avg (line), min–max (shaded), red bands = packet loss (local time)</text>`;
   return out + '</svg>';
 }
 

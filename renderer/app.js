@@ -223,14 +223,14 @@ function setYManual(v) {
   yManual = Math.min(1000, Math.max(5, v));
   const b = $('btnScaleLock');
   b.classList.add('unlocked');
-  b.title = 'Y scale: manual 0–' + Math.round(yManual) + 'ms — click to re-lock to auto';
+  b.title = 'Y scale: manual 0–' + Math.round(yManual) + 'ms. Click to re-lock to auto';
   if (chart) chart.setScale('y', { min: 0, max: yManual });
 }
 function clearYManual() {
   yManual = null;
   const b = $('btnScaleLock');
   b.classList.remove('unlocked');
-  b.title = 'Y scale: auto — drag the axis numbers or click to set manually';
+  b.title = 'Y scale: auto. Drag the axis numbers or click to set manually';
   // re-run auto ranging over the currently visible x window
   if (chart) chart.setScale('x', { min: chart.scales.x.min, max: chart.scales.x.max });
 }

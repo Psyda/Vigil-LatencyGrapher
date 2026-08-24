@@ -207,7 +207,7 @@ async function discoverViaTtlPing(destIp, family, onProgress) {
     }
     hops.push({ ttl, ip });
     silent = ip ? 0 : silent + 1;
-    if (silent >= 8) break; // filtered path — deeper probing is all dead air
+    if (silent >= 8) break; // filtered path: deeper probing is all dead air
   }
   while (hops.length && hops[hops.length - 1].ip == null) hops.pop();
   return { hops, reached: false, method: 'ttl-ping' };
@@ -353,7 +353,7 @@ async function runTrace(why) {
     for (const h of displayRows()) {
       process.stdout.write(`  hop ${String(h.ttl ?? '→').padStart(2)}  ${h.ip || '* (no reply)'}${h.isDest ? '  <- destination' : ''}\n`);
     }
-    if (!r.hops.length) process.stdout.write('  (path discovery got no answers — monitoring the destination only)\n');
+    if (!r.hops.length) process.stdout.write('  (path discovery got no answers, monitoring the destination only)\n');
   }
 }
 
@@ -394,43 +394,43 @@ function verdictLines(a) {
   }
   const destStat = `loss ${fmtPct(d.loss)}% · jitter ${fmtMs(d.jitter)}ms · avg ${fmtMs(d.avg)}ms (last ${W}m)`;
   if (a.kind === 'dead') {
-    L.push([`DESTINATION UNREACHABLE — no replies from ${o.host} in the last ${W}m`, 'red']);
+    L.push([`DESTINATION UNREACHABLE: no replies from ${o.host} in the last ${W}m`, 'red']);
     L.push([a.deepest
-      ? `deepest hop still answering: ${hopLabel(a.deepest, true)} — the path breaks after it`
-      : 'no hop answers at all — this machine looks offline', 'red']);
+      ? `deepest hop still answering: ${hopLabel(a.deepest, true)}. The path breaks after it`
+      : 'no hop answers at all. This machine looks offline', 'red']);
     return L;
   }
   if (a.kind === 'clean') {
-    L.push([`PATH CLEAN — ${o.host}: ${destStat}`, 'green']);
+    L.push([`PATH CLEAN. ${o.host}: ${destStat}`, 'green']);
     if (a.isolated.length) {
-      L.push([`noise at ${a.isolated.map((h) => 'hop ' + h.ttl).join(', ')} is NOT reaching the destination — router ICMP deprioritization, ignore it`, 'gray']);
+      L.push([`noise at ${a.isolated.map((h) => 'hop ' + h.ttl).join(', ')} is NOT reaching the destination. Router ICMP deprioritization, ignore it`, 'gray']);
     }
     return L;
   }
   if (a.kind === 'blind') {
-    L.push([`${d.state === 'bad' ? 'UNSTABLE' : 'DEGRADED'} — ${o.host}: ${destStat}`, d.state === 'bad' ? 'red' : 'yellow']);
+    L.push([`${d.state === 'bad' ? 'UNSTABLE' : 'DEGRADED'}. ${o.host}: ${destStat}`, d.state === 'bad' ? 'red' : 'yellow']);
     L.push(['no intermediate hop answers direct pings, so the fault cannot be pinned to a segment', 'gray']);
     return L;
   }
   // trouble
-  L.push([`${d.state === 'bad' ? 'UNSTABLE' : 'DEGRADED'} — ${o.host}: ${destStat}`, d.state === 'bad' ? 'red' : 'yellow']);
+  L.push([`${d.state === 'bad' ? 'UNSTABLE' : 'DEGRADED'}. ${o.host}: ${destStat}`, d.state === 'bad' ? 'red' : 'yellow']);
   const on = a.onset;
   if (on.isDest) {
-    L.push(['only the destination shows it; every measurable hop before it is clean — far-end or return-path trouble, not your line', 'yellow']);
+    L.push(['only the destination shows it and every hop before it is clean. Far-end or return-path trouble, not your line', 'yellow']);
   } else {
-    L.push([`first bad hop: ${hopLabel(on, true)} — loss ${fmtPct(on.rd.loss)}% · jitter ${fmtMs(on.rd.jitter)}ms, carried through every later hop`, 'yellow']);
+    L.push([`first bad hop: ${hopLabel(on, true)} at loss ${fmtPct(on.rd.loss)}% · jitter ${fmtMs(on.rd.jitter)}ms, carried through every later hop`, 'yellow']);
     if (a.lastClean) {
-      L.push([`last clean hop: ${hopLabel(a.lastClean, true)} — loss ${fmtPct(a.lastClean.rd.loss)}% · jitter ${fmtMs(a.lastClean.rd.jitter)}ms`, 'green']);
+      L.push([`last clean hop: ${hopLabel(a.lastClean, true)} at loss ${fmtPct(a.lastClean.rd.loss)}% · jitter ${fmtMs(a.lastClean.rd.jitter)}ms`, 'green']);
       L.push([`=> problem enters between hop ${a.lastClean.ttl} and hop ${on.ttl}` +
-        (a.lastClean.ttl === 1 ? ' — gateway-to-ISP territory: modem, line, or uplink' : ''), 'cyan']);
+        (a.lastClean.ttl === 1 ? ', gateway-to-ISP territory: modem, line, or uplink' : ''), 'cyan']);
     } else if (on.ttl === 1) {
-      L.push(['=> problem starts at your first hop — local network territory (machine, wifi, or router itself)', 'cyan']);
+      L.push(['=> problem starts at your first hop, local network territory (machine, wifi, or router itself)', 'cyan']);
     } else {
-      L.push([`=> elevated from the first hop that answers (hop ${on.ttl}); hops before it stay silent, so the entry point is at or before it`, 'cyan']);
+      L.push([`=> elevated from the first hop that answers (hop ${on.ttl}). Hops before it stay silent, so the entry point is at or before it`, 'cyan']);
     }
   }
   if (a.isolated.length) {
-    L.push([`isolated noise at ${a.isolated.map((h) => 'hop ' + h.ttl).join(', ')} not carried downstream — ignore`, 'gray']);
+    L.push([`isolated noise at ${a.isolated.map((h) => 'hop ' + h.ttl).join(', ')} not carried downstream, safe to ignore`, 'gray']);
   }
   return L;
 }
@@ -559,7 +559,7 @@ function finish(code) {
   logRec({ t: 'end', at: iso(Date.now()), ranSec: Math.round((Date.now() - state.startedAt) / 1000), snapshots: state.snapshots + 1, pathChanges: state.pathChanges });
   if (!o.plain) process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
   const out = [];
-  out.push(paintC(`Vigil path jitter — ${o.host}, ran ${hhmmss(Date.now() - state.startedAt)}, ${state.pathChanges} path change(s)`, 'bold'));
+  out.push(paintC(`Vigil path jitter · ${o.host}, ran ${hhmmss(Date.now() - state.startedAt)}, ${state.pathChanges} path change(s)`, 'bold'));
   out.push('');
   out.push(...buildTable(a, process.stdout.columns || 120));
   out.push('');
@@ -569,7 +569,7 @@ function finish(code) {
   }
   if (state.logPath) {
     out.push('');
-    out.push(`Per-minute history: ${state.logPath} (${state.snapshots + 1} snapshots — feed it to an AI or attach to a ticket)`);
+    out.push(`Per-minute history: ${state.logPath} (${state.snapshots + 1} snapshots, ready to feed it to an AI or attach to a ticket)`);
   }
   process.stdout.write(out.join('\n') + '\n');
   // let the last JSONL records reach disk before exiting
@@ -606,7 +606,7 @@ async function main() {
   const probeArgs = process.platform === 'win32' ? ['-n', '1', '127.0.0.1'] : ['-c', '1', '127.0.0.1'];
   const check = spawnSync('ping', probeArgs, { windowsHide: true, timeout: 5000 });
   if (check.error && check.error.code === 'ENOENT') {
-    process.stderr.write('No `ping` binary on PATH — this tool drives the system ping.\n');
+    process.stderr.write('No `ping` binary on PATH. This tool drives the system ping.\n');
     process.exit(1);
   }
 

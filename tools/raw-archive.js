@@ -102,7 +102,7 @@ function main() {
     console.log(`\n${days.length} day(s), ${totalSamples} probes, ${totalLost} lost, ${(totalBytes / 1024).toFixed(1)} KB on disk` +
       (totalSamples ? `, ${(totalBytes / totalSamples).toFixed(2)} bytes/probe` : ''));
     if (cmd === 'verify') {
-      if (totalBad) { console.error(`VERIFY: ${totalBad} unreadable line(s) — see days flagged above.`); process.exit(2); }
+      if (totalBad) { console.error(`VERIFY: ${totalBad} unreadable line(s). See days flagged above.`); process.exit(2); }
       console.log('VERIFY: all lines decoded cleanly.');
     }
     return;

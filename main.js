@@ -121,7 +121,7 @@ function updateTray() {
   }
   const word = { good: 'clear', warn: 'marginal', bad: 'unstable', unknown: 'starting' }[worst];
   const detail = best ? ` · ${Math.round(best.avg)}ms · ${best.loss.toFixed(1)}% loss` : '';
-  tray.setToolTip(`Vigil — ${word}${detail}`);
+  tray.setToolTip(`Vigil · ${word}${detail}`);
 }
 
 function buildTrayMenu() {
@@ -324,7 +324,7 @@ if (!gotLock) {
 
     try {
       tray = new Tray(makeDot(DOT.unknown));
-      tray.setToolTip('Vigil — starting');
+      tray.setToolTip('Vigil · starting');
       tray.setContextMenu(buildTrayMenu());
       tray.on('click', () => showWindow());
     } catch (_) { /* tray unavailable */ }
