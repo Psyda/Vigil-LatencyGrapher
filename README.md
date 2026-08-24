@@ -1,8 +1,22 @@
+<p align="center"><img src="docs/banner.png" width="100%" alt="Vigil — live latency, packet loss, and a readiness verdict"></p>
+
 # Vigil
 
 A live network latency and packet-loss monitor for Windows, macOS, and Linux. It answers one question fast: is my connection clean enough to queue right now. It also keeps a full history so you can scrub back across minutes, days, or months and see exactly when things went bad.
 
 This is the `ping -t 8.8.8.8` habit turned into a real instrument. It watches several hosts at once, keeps min, average, and max for every slice of time, and gives you a plain readiness verdict — Clear, Marginal, or Unstable — based on the last few minutes.
+
+<p align="center"><img src="docs/screenshot-main.png" width="100%" alt="Vigil main window: an hour of per-probe latency with spike clusters, red loss bands, and a Clear readiness verdict"></p>
+
+<p align="center">
+  <img src="docs/screenshot-week.png" width="49.5%" alt="Seven days of evening congestion humps with packet-loss episodes">
+  <img src="docs/screenshot-zones.png" width="49.5%" alt="A month with the latency-zones overlay and a manually scaled Y axis">
+</p>
+<p align="center">
+  <img src="docs/screenshot-settings.png" width="49.5%" alt="Hosts and settings, with verdict thresholds">
+  <img src="docs/screenshot-compact.png" width="26%" alt="The compact always-on-top overlay">
+</p>
+<p align="center"><sub>Screenshots show generated demo data.</sub></p>
 
 ## Run it
 
