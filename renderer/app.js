@@ -733,6 +733,114 @@ async function saveSettings() {
 
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+// ---- tools modal ----------------------------------------------------------
+
+let jitterInPanel = false; // path locator running as a child streaming into the panel
+
+function toolStatus(msg, isErr) {
+  const el = $('toolStatus');
+  el.textContent = msg || '';
+  el.classList.toggle('err', !!isErr);
+}
+
+function showToolOut(text) {
+  const el = $('toolOut');
+  el.hidden = false;
+  el.textContent = text;
+  el.scrollTop = el.scrollHeight;
+}
+
+function appendToolOut(text) {
+  const el = $('toolOut');
+  el.hidden = false;
+  el.textContent += text;
+  // keep the stream bounded; the full session is in the JSONL log anyway
+  const lines = el.textContent.split('\n');
+  if (lines.length > 800) el.textContent = lines.slice(-500).join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+function openTools() {
+  if (!$('jitterHost').value) {
+    const t = state.targets.find((x) => x.id === state.focusedId);
+    $('jitterHost').value = (t && t.host) || '8.8.8.8';
+  }
+  $('toolsBg').classList.add('open');
+}
+
+function closeTools() { $('toolsBg').classList.remove('open'); }
+
+// disable the button while its tool runs, then report into the status line
+async function runTool(btnId, runningMsg, fn) {
+  const btn = $(btnId);
+  if (btn.disabled) return;
+  btn.disabled = true;
+  toolStatus(runningMsg);
+  try {
+    await fn();
+  } catch (e) {
+    toolStatus('Failed: ' + (e && e.message ? e.message : e), true);
+  }
+  btn.disabled = false;
+}
+
+function wireTools() {
+  $('btnTools').addEventListener('click', openTools);
+  $('toolsClose').addEventListener('click', closeTools);
+  $('toolsData').addEventListener('click', () => V.openDataFolder());
+  $('toolsBg').addEventListener('click', (e) => { if (e.target === $('toolsBg')) closeTools(); });
+
+  $('toolEvidence').addEventListener('click', () => runTool('toolEvidence', 'Building the evidence report…', async () => {
+    const r = await V.toolEvidenceReport();
+    if (r.canceled) toolStatus('');
+    else if (r.ok) toolStatus('Saved and opened: ' + r.path);
+    else { toolStatus('Evidence report failed', true); showToolOut(r.err); }
+  }));
+
+  $('toolExport').addEventListener('click', () => runTool('toolExport', 'Exporting the data report…', async () => {
+    const r = await V.toolExportReport();
+    if (r.canceled) toolStatus('');
+    else if (r.ok) toolStatus('Saved: ' + r.path);
+    else { toolStatus('Export failed', true); showToolOut(r.err); }
+  }));
+
+  $('toolTrend').addEventListener('click', () => runTool('toolTrend', 'Comparing days…', async () => {
+    const r = await V.toolWindowTrend();
+    if (r.ok) { showToolOut(r.out); toolStatus('Fix trend finished.'); }
+    else { toolStatus('Fix trend failed', true); showToolOut(r.err || r.out); }
+  }));
+
+  const archive = (cmd) => async () => {
+    const r = await V.toolRawArchive(cmd);
+    if (r.ok) { showToolOut(r.out || '(archive is empty)'); toolStatus('Archive ' + cmd + ' finished.'); }
+    else { toolStatus('Archive ' + cmd + ' failed', true); showToolOut(r.err || r.out); }
+  };
+  $('toolArchStats').addEventListener('click', () => runTool('toolArchStats', 'Reading the archive…', archive('stats')));
+  $('toolArchVerify').addEventListener('click', () => runTool('toolArchVerify', 'Decoding every day of the archive…', archive('verify')));
+
+  $('toolJitter').addEventListener('click', async () => {
+    if (jitterInPanel) { await V.toolPathJitterStop(); return; } // exit event resets the button
+    const r = await V.toolPathJitter($('jitterHost').value);
+    if (r.mode === 'terminal') {
+      toolStatus('Running in its own terminal window. Session logs land in the data folder.');
+    } else {
+      jitterInPanel = true;
+      $('toolJitter').textContent = 'Stop';
+      $('toolJitter').classList.add('running');
+      showToolOut('');
+      toolStatus('Path locator running. Logging to the data folder.');
+    }
+  });
+
+  V.onJitterOut((text) => appendToolOut(text));
+  V.onJitterExit(() => {
+    jitterInPanel = false;
+    $('toolJitter').textContent = 'Launch';
+    $('toolJitter').classList.remove('running');
+    toolStatus('Path locator stopped. Its log is in the data folder.');
+  });
+}
+
 // ---- mode (compact) -------------------------------------------------------
 function setBodyCompact(c) {
   state.compact = c;
@@ -819,7 +927,12 @@ async function init() {
   $('tgSave').addEventListener('click', saveSettings);
   $('modalBg').addEventListener('click', (e) => { if (e.target === $('modalBg')) tryCloseSettings(); });
   $('opacity').addEventListener('input', (e) => V.setOpacity(parseFloat(e.target.value)));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('modalBg').classList.contains('open')) tryCloseSettings(); });
+  wireTools();
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if ($('toolsBg').classList.contains('open')) closeTools();
+    else if ($('modalBg').classList.contains('open')) tryCloseSettings();
+  });
 
   V.onTick((data) => applyTick(data));
   V.onMode((m) => setBodyCompact(m.compact));

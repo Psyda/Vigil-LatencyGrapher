@@ -19,6 +19,16 @@ contextBridge.exposeInMainWorld('vigil', {
   minimize: () => ipcRenderer.invoke('win:min'),
   close: () => ipcRenderer.invoke('win:close'),
 
+  toolExportReport: () => ipcRenderer.invoke('tools:exportReport'),
+  toolEvidenceReport: () => ipcRenderer.invoke('tools:evidenceReport'),
+  toolWindowTrend: () => ipcRenderer.invoke('tools:windowTrend'),
+  toolRawArchive: (cmd) => ipcRenderer.invoke('tools:rawArchive', cmd),
+  toolPathJitter: (host) => ipcRenderer.invoke('tools:pathJitter', host),
+  toolPathJitterStop: () => ipcRenderer.invoke('tools:pathJitterStop'),
+  openDataFolder: () => ipcRenderer.invoke('tools:openDataFolder'),
+  onJitterOut: (cb) => ipcRenderer.on('tools:jitterOut', (_e, text) => cb(text)),
+  onJitterExit: (cb) => ipcRenderer.on('tools:jitterExit', () => cb()),
+
   onTick: (cb) => ipcRenderer.on('tick', (_e, data) => cb(data)),
   onMode: (cb) => ipcRenderer.on('mode', (_e, m) => cb(m)),
 });

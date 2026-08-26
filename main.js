@@ -1,8 +1,9 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile, spawn } = require('child_process');
 
 const { Store } = require('./src/store.js');
 const { ProbeEngine } = require('./src/probe.js');
@@ -298,6 +299,107 @@ ipcMain.handle('win:min', () => { if (win) win.minimize(); });
 ipcMain.handle('win:close', () => { if (win) win.hide(); });
 ipcMain.handle('app:setAutostart', (_e, v) => autostart.setAutostart(v));
 
+// --- tools ------------------------------------------------------------------
+// The tools/ scripts are plain node CLIs. Packaged builds have no system Node,
+// so they run under our own binary in node mode (ELECTRON_RUN_AS_NODE); the
+// scripts are shipped outside the asar for that (build.asarUnpack).
+
+const TOOLS_DIR = __dirname.includes('app.asar')
+  ? path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'tools')
+  : path.join(__dirname, 'tools');
+
+function runTool(script, args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [path.join(TOOLS_DIR, script), ...args], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: timeoutMs || 120000, maxBuffer: 64 * 1024 * 1024, windowsHide: true,
+    }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: String(stdout || ''), err: err ? String(stderr || err.message || err) : '' });
+    });
+  });
+}
+
+async function saveDialogFor(title, defName, extName, ext) {
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title,
+    defaultPath: path.join(app.getPath('documents'), defName),
+    filters: [{ name: extName, extensions: [ext] }],
+  });
+  return canceled || !filePath ? null : filePath;
+}
+
+const stamp = () => new Date().toISOString().slice(0, 10);
+
+ipcMain.handle('tools:exportReport', async () => {
+  const out = await saveDialogFor('Export data report', `vigil-report-${stamp()}.json`, 'JSON', 'json');
+  if (!out) return { canceled: true };
+  saveStore(); // the tool reads the data file; make it current first
+  const r = await runTool('export-report.js', ['--in', storePath(), '--pretty', '--out', out]);
+  if (r.ok) shell.showItemInFolder(out);
+  return r.ok ? { ok: true, path: out } : { ok: false, err: r.err };
+});
+
+ipcMain.handle('tools:evidenceReport', async () => {
+  const out = await saveDialogFor('Generate evidence report', `vigil-evidence-${stamp()}.html`, 'HTML', 'html');
+  if (!out) return { canceled: true };
+  saveStore();
+  const r = await runTool('evidence-report.js', ['--in', storePath(), '--out', out]);
+  if (r.ok) shell.openPath(out);
+  return r.ok ? { ok: true, path: out } : { ok: false, err: r.err };
+});
+
+ipcMain.handle('tools:windowTrend', async () => {
+  saveStore();
+  return runTool('window-trend.js', ['--in', storePath()]);
+});
+
+ipcMain.handle('tools:rawArchive', (_e, cmd) => {
+  const c = cmd === 'verify' ? 'verify' : 'stats';
+  return runTool('raw-archive.js', [c, '--dir', path.join(userDir(), 'raw-archive')], 300000);
+});
+
+// Path locator. With a system Node on Windows it gets a real terminal window
+// (full live table, its own lifetime). Otherwise it runs as a child in plain
+// mode and streams into the Tools panel: our binary in node mode is a GUI-
+// subsystem process, so a spawned console would show nothing.
+let jitterChild = null;
+
+function stopJitter() {
+  if (!jitterChild) return;
+  try { jitterChild.kill(); } catch (_) {}
+  jitterChild = null;
+}
+
+const sanitizeHost = (h) => String(h || '').trim().replace(/[^A-Za-z0-9.\-:_\[\]]/g, '').slice(0, 253) || '8.8.8.8';
+const hasSystemNode = () => new Promise((res) => execFile('node', ['--version'], (err) => res(!err)));
+
+ipcMain.handle('tools:pathJitter', async (_e, host) => {
+  const h = sanitizeHost(host);
+  const script = path.join(TOOLS_DIR, 'path-jitter.js');
+  if (process.platform === 'win32' && await hasSystemNode()) {
+    // cwd is the data folder so the JSONL logs collect next to everything else
+    spawn('cmd.exe', ['/d', '/s', '/k', `"title Vigil path locator - ${h} & node "${script}" ${h}"`], {
+      cwd: userDir(), detached: true, stdio: 'ignore', windowsVerbatimArguments: true,
+    }).unref();
+    return { mode: 'terminal', logDir: userDir() };
+  }
+  stopJitter();
+  jitterChild = spawn(process.execPath, [script, h, '--plain', '--no-color', '--snapshot', '15', '--plain-table', '2'], {
+    cwd: userDir(), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true,
+  });
+  const relay = (buf) => { if (win && !win.isDestroyed()) win.webContents.send('tools:jitterOut', String(buf)); };
+  jitterChild.stdout.on('data', relay);
+  jitterChild.stderr.on('data', relay);
+  jitterChild.on('exit', () => {
+    jitterChild = null;
+    if (win && !win.isDestroyed()) win.webContents.send('tools:jitterExit');
+  });
+  return { mode: 'panel', logDir: userDir() };
+});
+
+ipcMain.handle('tools:pathJitterStop', () => { stopJitter(); return true; });
+ipcMain.handle('tools:openDataFolder', () => { shell.openPath(userDir()); });
+
 // --- lifecycle --------------------------------------------------------------
 
 const gotLock = app.requestSingleInstanceLock();
@@ -337,5 +439,5 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => { /* stay alive in tray; quit handled via tray menu */ });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showWindow(); });
-  app.on('before-quit', () => { app.isQuitting = true; engine.stop(); archiver.stop(); saveStore(); saveConfig(); });
+  app.on('before-quit', () => { app.isQuitting = true; engine.stop(); archiver.stop(); stopJitter(); saveStore(); saveConfig(); });
 }

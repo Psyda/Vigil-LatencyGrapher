@@ -29,7 +29,12 @@
       "preload.js",
       "src/**",
       "renderer/**",
+      "tools/**",
       "node_modules/**"
+    ],
+    "asarUnpack": [
+      "tools/**",
+      "src/**"
     ],
     "win": {
       "target": ["nsis", "portable", "zip"],

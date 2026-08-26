@@ -71,19 +71,7 @@ Two files are written to Electron's per-user data folder: `vigil-data.json` for 
 
 Independent of the capped snapshot, Vigil keeps a permanent archive of every single probe ("Archive every probe to daily files" in settings, on by default). It lives in `raw-archive/` next to the data file, one file per UTC day: today is plain JSONL that gets appended about once a minute, and each finished day is gzipped once and never touched again. Being append-only, the worst a crash can do is truncate the final line, which readers skip. Recorded history is never rewritten.
 
-The encoding squeezes out the domain redundancy before gzip ever sees it. Timestamps are implicit: a line carries a start time and the probe interval, and each sample occupies the next slot, with an explicit `@+2.5`-style resync marker whenever real arrival drifts more than two seconds, so decoded times are always within ~2s of reality. Stable stretches run-length-encode (`21x47` is forty-seven consecutive 21ms probes and `L` is a lost one), RTTs are rounded to 0.1ms, and the daily gzip pass compresses the remaining repetition across lines. A line looks like:
-
-```
-{"v":1,"id":"cf","t0":1756000000000,"iv":1000,"n":60,"s":"21x5 L 22 21x12 @+2.5 19x41"}
-```
-
-Measured against real recorded traffic, a day of four hosts probed every second lands around 300 KB gzipped, which works out to roughly 100 MB per year and about 1 GB per decade, 27x smaller than plain JSON. `tools/raw-archive.js` reads it back:
-
-```bash
-node tools/raw-archive.js stats                     # per-day summary
-node tools/raw-archive.js verify                    # decode everything, report damage
-node tools/raw-archive.js export --day 2026-08-23 --target cf --csv > cf.csv
-```
+The format is heavily compressed before gzip ever sees it. A day of four hosts probed every second lands around 300 KB, which works out to roughly 100 MB per year and about 1 GB per decade, 27x smaller than plain JSON. The Archive check tool reads it back, verifies it, and exports it. The encoding itself is documented in [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Launch at startup
 
@@ -105,43 +93,17 @@ Drag horizontally on the graph to zoom into a region. The view holds while new p
 
 The Y scale can also be taken manual, market-style: drag or scroll on the axis numbers to set the range (0 up to 1000ms), shown by the small lock icon in the lower-left corner of the chart turning open. A manual scale survives switching hosts and time windows, which makes readings comparable across timescales. Click the lock to return to auto. And under Graph in settings there is an experimental latency-zones overlay (off by default): it tints the chart background above two customizable boundaries, moderate from 80ms and high from 100ms by default, so on a zoomed-out month view the many "small" 150ms spikes read as clearly in the high zone even when an 800ms outlier dominates the scale. The pin button keeps the window above other windows, including a borderless game, and it stays put when you click it. Compact mode shrinks it to a small always-on-top overlay you can leave in a corner of the screen. Closing the window hides it to the tray and keeps monitoring. Quit from the tray menu to stop.
 
-## Exporting a report for analysis
+## Toolbox
 
-`tools/export-report.js` turns the stored history into a compact JSON report built for feeding to an AI or attaching to an ISP ticket:
+The wrench button in the footer opens a set of troubleshooting companions. Each one runs with a click, no installs and no terminal needed:
 
-```bash
-node tools/export-report.js --pretty --out report.json
-```
+* **Evidence report** builds a print-friendly page of charts and timestamped loss episodes for an ISP ticket. Open it in your browser and print to PDF.
+* **Data report** condenses the whole stored history into one JSON file, made for handing to an AI or filing alongside a ticket.
+* **Path locator** traces the route to a host and pings every hop in parallel to name the segment where the trouble starts: your wifi, the modem, the ISP, or beyond.
+* **Fix trend** compares the same quiet and busy hours across every day of history, so you can judge whether a new router or an ISP visit actually changed anything.
+* **Archive check** summarizes and verifies the raw probe archive.
 
-It auto-locates the data file, and the app can stay open since the file is rewritten every 30 seconds. The report contains per-target overall stats, daily summaries, two hour-of-day profiles in local time (a month-scale one from hour buckets and a fine one from the last week of minute buckets, including the rate of minutes containing a spike), the worst loss episodes with ISO timestamps, and a spike analysis against a median baseline. Useful flags: `--days N` to limit the span, `--target <id>` for one target, `--buckets` to include raw hour buckets, `--in <path>` to point at a specific data file. All timestamps in the report are UTC ISO strings, which correlate directly against modem event logs.
-
-`tools/evidence-report.js` turns either that report or the raw data file into a single self-contained, print-friendly HTML evidence document intended for ISP escalation, with headline packet counts, a cross-target comparison, daily timeline and hour-of-day charts, and timestamped loss episode tables in local time:
-
-```bash
-node tools/evidence-report.js report.json --out evidence.html
-node tools/evidence-report.js --in vigil-data.json --out evidence.html
-```
-
-Pointing it at `vigil-data.json` directly additionally renders fine last-hour and last-24-hour minute charts. Open the HTML in any browser and print to PDF for attaching to a ticket.
-
-## Finding where the jitter enters: the path locator
-
-Knowing that 8.8.8.8 is jittery tells you something is wrong. It does not tell you whether it is your wifi, your modem, your ISP, or the far end. `tools/path-jitter.js` is a standalone companion app for exactly that question. It traces the route to a target, then pings every responding hop continuously and in parallel, with one persistent ping process per hop, the same probing model as the app, and compares loss and jitter per hop over a rolling window:
-
-```bash
-node tools/path-jitter.js                # trace + monitor 8.8.8.8
-node tools/path-jitter.js 1.1.1.1        # any other target
-node tools/path-jitter.js --window 10    # judge over the last 10 minutes
-node tools/path-jitter.js --plain        # line output instead of the live table
-```
-
-It shows a live MTR-style table with per-hop loss, latency, jitter, and a sparkline, plus a verdict that names the segment where the trouble starts, e.g. "problem enters between hop 1 and hop 3". Press `q` to quit, `r` to re-trace immediately. The route is re-traced every 15 minutes by default (`--retrace N`, 0 to disable), and path changes are counted and logged, since a flapping route is itself a jitter suspect.
-
-One rule makes hop tables honest, and the verdict applies it for you: routers answer pings from their rate-limited control plane, so a noisy middle hop above a clean destination is cosmetic and gets labeled as ignorable. Only trouble that starts at some hop and persists through every later hop to the destination is treated as real. Hops that answer traceroute but ignore direct pings are kept for numbering but excluded from the analysis.
-
-Leave it running in the background, since intermittent faults only localize while they are actually happening. Each run writes a JSONL log (`vigil-path-<target>-<stamp>.jsonl`, disable with `--no-log`) with one timestamped per-hop snapshot per minute plus every trace and path change, in UTC ISO timestamps like the other reports, ready to feed to an AI or attach to an ISP ticket alongside the evidence report.
-
-Like the app it needs no admin rights and no installs: it drives the system `ping`/`tracert` binaries, and where `traceroute` is missing (common on Linux) it discovers the path itself with TTL-limited pings. The same locale and macOS loss caveats from the notes below apply.
+Every tool is also a standalone script under `tools/` that runs with plain Node, for scripting or for machines without the app. Full descriptions and CLI flags live in [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Files
 
@@ -156,6 +118,7 @@ src/rawlog.js      Raw-archive line codec (run-length + implicit time)
 src/archiver.js    Append-only daily raw archive with gzip rotation
 src/sysinfo.js     Best-effort default-gateway detection
 renderer/          UI: index.html, app.js, styles.css, vendored uPlot
+tools/             Troubleshooting scripts behind the in-app Toolbox, see docs/TOOLS.md
 ```
 
 ## Notes and limits

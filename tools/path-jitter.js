@@ -26,7 +26,8 @@
 //
 // Flags: --window MIN (default 5)  --retrace MIN (15, 0=off)  --max-hops N (30)
 //        --timeout MS (1000)  --snapshot SEC (60)  --log PATH  --no-log
-//        --plain  --no-color
+//        --plain  --no-color  --plain-table N (print the hop table every Nth
+//        plain snapshot; 5)
 // Keys while running: q quit · r re-trace now.
 //
 // Leave it running across a session: it re-traces periodically (routes flap),
@@ -49,7 +50,7 @@ const opt = (name, dflt) => {
   const i = args.indexOf('--' + name);
   return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : dflt;
 };
-const VALUE_FLAGS = new Set(['window', 'retrace', 'max-hops', 'timeout', 'snapshot', 'log']);
+const VALUE_FLAGS = new Set(['window', 'retrace', 'max-hops', 'timeout', 'snapshot', 'log', 'plain-table']);
 const positional = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i].startsWith('--')) { if (VALUE_FLAGS.has(args[i].slice(2))) i++; continue; }
@@ -67,6 +68,7 @@ const o = {
   maxHops: clampInt(opt('max-hops', '30'), 1, 64, 30),
   timeout: clampInt(opt('timeout', '1000'), 200, 5000, 1000),
   snapshotMs: clampInt(opt('snapshot', '60'), 10, 3600, 60) * 1000,
+  plainTableEvery: clampInt(opt('plain-table', '5'), 1, 1000, 5),
   plain: flag('plain') || !process.stdout.isTTY,
   color: !flag('no-color') && process.stdout.isTTY,
 };
@@ -543,7 +545,7 @@ function takeSnapshot() {
   if (o.plain) {
     const head = verdictLines(a).map(([t]) => t).join(' | ');
     process.stdout.write(`[${clock(Date.now())}] ${head}\n`);
-    if (state.snapshots % 5 === 0) {
+    if (state.snapshots % o.plainTableEvery === 0) {
       for (const l of buildTable(a, 120)) process.stdout.write('  ' + l + '\n');
     }
   }
